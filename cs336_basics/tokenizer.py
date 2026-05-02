@@ -30,7 +30,11 @@ class Tokenizer:
         return pre_tokens
 
     @staticmethod
-    def _merge(pre_tokens, merge_candidate):
+    def _merge(
+            pre_tokens: dict[tuple[bytes, ...], int],
+            frequency: dict[tuple[bytes, bytes], int],
+            merge_candidate: tuple[bytes, bytes]
+    ):
         new_pre_tokens = dict()
         for pre_token in pre_tokens:
             new_pre_token = list()
@@ -38,7 +42,25 @@ class Tokenizer:
             i = 0
             while i < len(pre_token):
                 if i < len(pre_token) - 1 and (pre_token[i], pre_token[i + 1]) == merge_candidate:
-                    new_pre_token.append(merge_candidate[0] + merge_candidate[1])
+                    merged = merge_candidate[0] + merge_candidate[1]
+                    new_pre_token.append(merged)
+                    # 发生合并，需要考虑对前后 pair 的影响
+                    # (pre_token[i - 1], pre_token[i]) 的频次转变为 (pre_token[i - 1], merged) 的频次
+                    # (pre_token[i + 1], pre_token[i + 2]) 的频次转变为 (merged, pre_token[i + 2]) 的频次
+                    if i - 1 >= 0:
+                        front_pair = (pre_token[i - 1], pre_token[i])
+                        frequency[front_pair] -= pre_tokens[pre_token]
+                        if frequency[front_pair] == 0:
+                            del frequency[front_pair]
+                        merged_front_pair = (pre_token[i - 1], merged)
+                        frequency[merged_front_pair] = frequency.get(merged_front_pair, 0) + pre_tokens[pre_token]
+                    if i + 2 <= len(pre_token) - 1:
+                        back_pair = (pre_token[i + 1], pre_token[i + 2])
+                        frequency[back_pair] -= pre_tokens[pre_token]
+                        if frequency[back_pair] == 0:
+                            del frequency[back_pair]
+                        merged_back_pair = (merged, pre_token[i + 2])
+                        frequency[merged_back_pair] = frequency.get(merged_back_pair, 0) + pre_tokens[pre_token]
                     i += 2
                 else:
                     new_pre_token.append(pre_token[i])
@@ -46,20 +68,22 @@ class Tokenizer:
 
             new_pre_token = tuple(new_pre_token)
             new_pre_tokens[new_pre_token] = pre_tokens[pre_token]
-        return new_pre_tokens
+
+        del frequency[merge_candidate]
+        return new_pre_tokens, frequency
 
 
     def tokenize(self, input_text: str, vocab_size: int):
         assert vocab_size >= len(self.vocab)
-        frequency: dict[tuple[bytes, bytes], int] = dict()
 
         pre_tokens = self._pre_tokenize(input_text)
-        while len(self.vocab) < vocab_size:
-            for pre_token in pre_tokens:
-                for i in range(len(pre_token) - 1):
-                    pair = (pre_token[i], pre_token[i + 1])
-                    frequency[pair] = frequency.get(pair, 0) + pre_tokens[pre_token]
+        frequency: dict[tuple[bytes, bytes], int] = dict()
+        for pre_token in pre_tokens:
+            for i in range(len(pre_token) - 1):
+                pair = (pre_token[i], pre_token[i + 1])
+                frequency[pair] = frequency.get(pair, 0) + pre_tokens[pre_token]
 
+        while len(self.vocab) < vocab_size:
             max_frequency = max(frequency.values())
             candidates = list()
             for pair in frequency:
@@ -67,8 +91,7 @@ class Tokenizer:
                     candidates.append(pair)
             merge_candidate: tuple[bytes, bytes] = max(candidates)
 
-            pre_tokens = self._merge(pre_tokens, merge_candidate)
-            frequency.clear()  # 待优化：可以不用每次全量跑
+            pre_tokens, frequency = self._merge(pre_tokens, frequency, merge_candidate)
             self.vocab[merge_candidate[0] + merge_candidate[1]] = len(self.vocab)
             self.merges.append(merge_candidate)
 
