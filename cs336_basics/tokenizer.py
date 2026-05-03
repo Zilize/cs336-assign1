@@ -1,5 +1,6 @@
 import os
 import regex as re
+import pickle as pkl
 from tqdm import tqdm
 from typing import BinaryIO
 from multiprocessing import Pool
@@ -10,7 +11,7 @@ class Tokenizer:
         self.input_path = input_path
         self.vocab_size = vocab_size
         self.special_tokens = special_tokens
-        self.num_processes = 4
+        self.num_processes = 24
 
         self.vocab: dict[bytes, int] = self._init_vocab()
         assert vocab_size >= len(self.vocab)
@@ -214,9 +215,20 @@ class Tokenizer:
                 pbar.update(1)
 
 
+def process_dataset(dataset_name, dataset_path, vocab_size):
+    tokenizer = Tokenizer(dataset_path, vocab_size, ['<|endoftext|>'])
+    save_dir = os.path.join(f'../data/{dataset_name}')
+    os.makedirs(save_dir, exist_ok=True)
+
+    with open(os.path.join(save_dir, 'vocab.pkl'), 'wb') as f:
+        pkl.dump(tokenizer.vocab, f)
+    with open(os.path.join(save_dir, 'merges.pkl'), 'wb') as f:
+        pkl.dump(tokenizer.merges, f)
+
+
 def main():
-    tokenizer = Tokenizer('/root/cs336-assign1/data/TinyStoriesV2-GPT4-valid.txt', 10000, ['<|endoftext|>'])
-    pass
+    process_dataset('tinystory', '../data/TinyStoriesV2-GPT4-train.txt', 10000)
+    process_dataset('owt', '../data/owt_train.txt', 32000)
 
 
 if __name__ == '__main__':
