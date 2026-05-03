@@ -217,7 +217,7 @@ class Tokenizer:
 
 def process_dataset(dataset_name, dataset_path, vocab_size):
     tokenizer = Tokenizer(dataset_path, vocab_size, ['<|endoftext|>'])
-    save_dir = os.path.join(f'../data/{dataset_name}')
+    save_dir = os.path.join(f'data/{dataset_name}')
     os.makedirs(save_dir, exist_ok=True)
 
     with open(os.path.join(save_dir, 'vocab.pkl'), 'wb') as f:
