@@ -1,4 +1,5 @@
 import os
+import time
 import regex as re
 import pickle as pkl
 from tqdm import tqdm
@@ -14,7 +15,7 @@ class Tokenizer:
         special_tokens: list[str],
         dataset_name: str,
         num_iterations: int = 10,
-        num_processes: int = 12,
+        num_processes: int = 20,
     ):
         self.input_path = input_path
         self.vocab_size = vocab_size
@@ -114,17 +115,20 @@ class Tokenizer:
     def _merge(
             pre_tokens: dict[tuple[bytes, ...], int],
             frequency: dict[tuple[bytes, bytes], int],
+            inverted: dict[tuple[bytes, bytes], set[tuple[bytes, ...]]],
             merge_candidate: tuple[bytes, bytes]
     ):
-        new_pre_tokens = dict()
-        for pre_token in pre_tokens:
+        for pre_token in inverted[merge_candidate]:
             new_pre_token_list: list[bytes] = list()
 
             i = 0
             subtract_index_pair_set = set()  # index in pre_token
             add_index_set: set[int] = set()  # index in new_pre_token_list
+
+            is_merged = False
             while i < len(pre_token):
                 if i < len(pre_token) - 1 and (pre_token[i], pre_token[i + 1]) == merge_candidate:
+                    is_merged = True
                     merged = merge_candidate[0] + merge_candidate[1]
                     new_pre_token_list.append(merged)
 
@@ -149,34 +153,80 @@ class Tokenizer:
                     new_pre_token_list.append(pre_token[i])
                     i += 1
 
-            # 合并后消失的共现组，从频率表中减去
-            for subtract_index_pair in subtract_index_pair_set:
-                subtract_item = (pre_token[subtract_index_pair[0]], pre_token[subtract_index_pair[1]])
-                frequency[subtract_item] -= pre_tokens[pre_token]
-                assert frequency[subtract_item] >= 0
-                if frequency[subtract_item] == 0:
-                    del frequency[subtract_item]
-            # 合并后新增的元素，构建共现组再调整频率表
-            add_index_pair_set = set()
-            for add_index in add_index_set:
-                if add_index > 0:
-                    add_index_pair = (add_index - 1, add_index)
-                    add_index_pair_set.add(add_index_pair)
-                if add_index + 1 <= len(new_pre_token_list) - 1:
-                    add_index_pair = (add_index, add_index + 1)
-                    add_index_pair_set.add(add_index_pair)
-            for add_index_pair in add_index_pair_set:
-                # PyCharm 静态分析有点问题，故拆开来写
-                a: int = add_index_pair[0]
-                b: int = add_index_pair[1]
-                add_item = (new_pre_token_list[a], new_pre_token_list[b])
-                frequency[add_item] = frequency.get(add_item, 0) + pre_tokens[pre_token]
+            assert is_merged == True
+            if is_merged:
+                new_pre_token = tuple(new_pre_token_list)
 
-            new_pre_token = tuple(new_pre_token_list)
-            new_pre_tokens[new_pre_token] = pre_tokens[pre_token]
+                # 1. 增量更新 frequency 表和 inverted 表
+                # 合并后消失的共现组，从频率表中减去；
+                for subtract_index_pair in subtract_index_pair_set:
+                    subtract_item = (pre_token[subtract_index_pair[0]], pre_token[subtract_index_pair[1]])
+                    frequency[subtract_item] -= pre_tokens[pre_token]
+                    assert frequency[subtract_item] >= 0
+                    if frequency[subtract_item] == 0:
+                        del frequency[subtract_item]
+
+                    if subtract_item == merge_candidate:
+                        # 类似于 (o, o, o, o) 按 (o, o) 合并的时候会发生自指
+                        # 这时候不用管，因为最后 inverted[merge_candidate] 会被整个扔掉
+                        pass
+                    else:
+                        # 同一个 pre_token 里面可能出现相同的 pair 导致多次删除，用 discard 保证幂等性
+                        # 比如 (u, n, a, u, n)
+                        inverted[subtract_item].discard(pre_token)
+                        if len(inverted[subtract_item]) == 0:
+                            del inverted[subtract_item]
+
+                # 合并后新增的元素，构建共现组再调整频率表
+                add_index_pair_set = set()
+                for add_index in add_index_set:
+                    if add_index > 0:
+                        add_index_pair = (add_index - 1, add_index)
+                        add_index_pair_set.add(add_index_pair)
+                    if add_index + 1 <= len(new_pre_token_list) - 1:
+                        add_index_pair = (add_index, add_index + 1)
+                        add_index_pair_set.add(add_index_pair)
+                for add_index_pair in add_index_pair_set:
+                    # PyCharm 静态分析有点问题，故拆开来写
+                    a: int = add_index_pair[0]
+                    b: int = add_index_pair[1]
+                    add_item = (new_pre_token_list[a], new_pre_token_list[b])
+                    frequency[add_item] = frequency.get(add_item, 0) + pre_tokens[pre_token]
+
+                    assert add_item != merge_candidate
+                    inverted.setdefault(add_item, set()).add(new_pre_token)  # 其实可以合并到下面去
+
+                # 对于当前 new_pre_token 的所有 pair，到其索引列表中把 pre_token 更新为 new_pre_token
+                for i in range(len(new_pre_token) - 1):
+                    pair = (new_pre_token[i], new_pre_token[i + 1])
+
+                    assert pair != merge_candidate
+                    # 这里可能会遇到新 pair 所以用 discard 保证幂等性
+                    inverted[pair].discard(pre_token)
+                    inverted[pair].add(new_pre_token)
+
+                # 2. 就地修改 pre_tokens
+                # 如果发生合并，才考虑换 key
+
+                # todo: for debug
+                # if pre_token == (b' ', b't', b'i', b'c', b'k', b'i', b'n', b'g'):
+                #     counter = 0
+                #     for a in merge_candidate_pre_tokens:
+                #         if a == (b' ', b't', b'i', b'c', b'k', b'i', b'n', b'g'):
+                #             counter += 1
+                #     pass
+
+                new_pre_token_count = pre_tokens[pre_token]
+                del pre_tokens[pre_token]
+                pre_tokens[new_pre_token] = new_pre_token_count
 
         del frequency[merge_candidate]
-        return new_pre_tokens, frequency
+        del inverted[merge_candidate]
+
+        # todo: for debug
+        if merge_candidate == (b'\x80', b'\x93'):
+            pass
+        return pre_tokens, frequency
 
     def _pre_tokenize_corpus(self) -> dict[tuple[bytes, ...], int]:
         boundaries_list: list[list[tuple[int, int]]] = list()
@@ -212,14 +262,26 @@ class Tokenizer:
         return pre_tokens
 
     def _train_bpe_merges(self, pre_tokens: dict[tuple[bytes, ...], int]) -> None:
+        # 要增量式维护两个数据结构：
+        # frequency: pair的频率统计表，用于找到频率最大的pair；
+        #            其实可以用优先队列来做，排序同时考虑频次和key的字典序，不过这里不是瓶颈，所以先不考虑了
+        # inverted: pair的倒排索引，集合表示以去重，用于快速找到合并所影响到的pre_token
         frequency: dict[tuple[bytes, bytes], int] = dict()
-        for pre_token in pre_tokens:
+        inverted: dict[tuple[bytes, bytes], set[tuple[bytes, ...]]] = dict()
+        for pre_token in tqdm(pre_tokens):
             for i in range(len(pre_token) - 1):
                 pair = (pre_token[i], pre_token[i + 1])
                 frequency[pair] = frequency.get(pair, 0) + pre_tokens[pre_token]
+                inverted.setdefault(pair, set()).add(pre_token)
+
+        # todo: for debug
+        a = inverted[(b'\x80', b'\x93')]
 
         with tqdm(total=self.vocab_size, initial=len(self.vocab), desc="BPE training") as pbar:
             while len(self.vocab) < self.vocab_size:
+                if len(frequency) <= 0:
+                    # 对于小数据集，可能达成每个 pre_token 都合并得只剩一个 bytes，提前退出
+                    break
                 max_frequency = max(frequency.values())
                 candidates = list()
                 for pair in frequency:
@@ -227,13 +289,13 @@ class Tokenizer:
                         candidates.append(pair)
                 merge_candidate: tuple[bytes, bytes] = max(candidates)
 
-                pre_tokens, frequency = self._merge(pre_tokens, frequency, merge_candidate)
+                pre_tokens, frequency = self._merge(pre_tokens, frequency, inverted, merge_candidate)
                 self.vocab[merge_candidate[0] + merge_candidate[1]] = len(self.vocab)
                 self.merges.append(merge_candidate)
                 pbar.update(1)
 
     def _default_pre_token_cache_path(self) -> str:
-        return os.path.join("cache", self.dataset_name, "pre_tokens.pkl")
+        return os.path.join("../cache", self.dataset_name, "pre_tokens.pkl")
 
     def _default_tokenizer_result_dir(self) -> str:
         return os.path.join("data", self.dataset_name)
@@ -287,9 +349,9 @@ class Tokenizer:
 
 def main():
     tokenizer = Tokenizer(
-        'data/owt_train.txt', 32000, ['<|endoftext|>'], 'owt', num_iterations=100
+        '../data/TinyStoriesV2-GPT4-train.txt', 32000, ['<|endoftext|>'], 'tinystory', num_iterations=50
     )
-    tokenizer.pre_tokenize()
+    # tokenizer.pre_tokenize()
     tokenizer.bpe_merge()
     tokenizer.dump()
 
