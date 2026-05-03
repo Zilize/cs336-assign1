@@ -7,17 +7,24 @@ from multiprocessing import Pool
 
 
 class Tokenizer:
-    def __init__(self, input_path: str, vocab_size: int, special_tokens: list[str]):
+    def __init__(
+        self,
+        input_path: str,
+        vocab_size: int,
+        special_tokens: list[str],
+        dataset_name: str,
+        num_processes: int = 12,
+    ):
         self.input_path = input_path
         self.vocab_size = vocab_size
         self.special_tokens = special_tokens
-        self.num_processes = 24
+        self.num_processes = num_processes
+        self.dataset_name = dataset_name
 
         self.vocab: dict[bytes, int] = self._init_vocab()
         assert vocab_size >= len(self.vocab)
         self.merges: list[tuple[bytes, bytes]] = list()
-
-        self._build()
+        self._pre_tokens: dict[tuple[bytes, ...], int] | None = None
 
     def _init_vocab(self):
         vocabulary = {bytes([i]): i for i in range(256)}
@@ -171,7 +178,7 @@ class Tokenizer:
         del frequency[merge_candidate]
         return new_pre_tokens, frequency
 
-    def _build(self):
+    def _pre_tokenize_corpus(self) -> dict[tuple[bytes, ...], int]:
         args = list()
         with open(self.input_path, "rb") as f:
             boundaries = self._find_chunk_boundaries(f, self.num_processes, b"<|endoftext|>")
@@ -193,7 +200,9 @@ class Tokenizer:
             for result in results:
                 if key in result:
                     pre_tokens[key] = pre_tokens.get(key, 0) + result[key]
+        return pre_tokens
 
+    def _train_bpe_merges(self, pre_tokens: dict[tuple[bytes, ...], int]) -> None:
         frequency: dict[tuple[bytes, bytes], int] = dict()
         for pre_token in pre_tokens:
             for i in range(len(pre_token) - 1):
@@ -214,21 +223,66 @@ class Tokenizer:
                 self.merges.append(merge_candidate)
                 pbar.update(1)
 
+    def _default_pre_token_cache_path(self) -> str:
+        return os.path.join("cache", self.dataset_name, "pre_tokens.pkl")
 
-def process_dataset(dataset_name, dataset_path, vocab_size):
-    tokenizer = Tokenizer(dataset_path, vocab_size, ['<|endoftext|>'])
-    save_dir = os.path.join(f'data/{dataset_name}')
-    os.makedirs(save_dir, exist_ok=True)
+    def _default_tokenizer_result_dir(self) -> str:
+        return os.path.join("data", self.dataset_name)
 
-    with open(os.path.join(save_dir, 'vocab.pkl'), 'wb') as f:
-        pkl.dump(tokenizer.vocab, f)
-    with open(os.path.join(save_dir, 'merges.pkl'), 'wb') as f:
-        pkl.dump(tokenizer.merges, f)
+    def pre_tokenize(self, use_cache: bool = True) -> None:
+        if use_cache:
+            path = self._default_pre_token_cache_path()
+            parent = os.path.dirname(path)
+            if parent:
+                os.makedirs(parent, exist_ok=True)
+            pre_tokens = self._pre_tokenize_corpus()
+            with open(path, "wb") as f:
+                pkl.dump(
+                    {
+                        "vocab_size": self.vocab_size,
+                        "special_tokens": self.special_tokens,
+                        "pre_tokens": pre_tokens,
+                    },
+                    f,
+                )
+            self._pre_tokens = None
+        else:
+            self._pre_tokens = self._pre_tokenize_corpus()
+
+    def bpe_merge(self, use_cache: bool = True) -> None:
+        if use_cache:
+            path = self._default_pre_token_cache_path()
+            with open(path, "rb") as f:
+                data = pkl.load(f)
+            assert data["vocab_size"] == self.vocab_size and data["special_tokens"] == self.special_tokens
+            pre_tokens = data["pre_tokens"]
+        else:
+            assert self._pre_tokens is not None
+            pre_tokens = self._pre_tokens
+            self._pre_tokens = None
+        self._train_bpe_merges(pre_tokens)
+
+    def build(self) -> None:
+        self.pre_tokenize(use_cache=False)
+        self.bpe_merge(use_cache=False)
+
+    def dump(self) -> None:
+        save_dir = self._default_tokenizer_result_dir()
+        os.makedirs(save_dir, exist_ok=True)
+
+        with open(os.path.join(save_dir, 'vocab.pkl'), 'wb') as f:
+            pkl.dump(self.vocab, f)
+        with open(os.path.join(save_dir, 'merges.pkl'), 'wb') as f:
+            pkl.dump(self.merges, f)
 
 
 def main():
-    process_dataset('tinystory', 'data/TinyStoriesV2-GPT4-train.txt', 10000)
-    process_dataset('owt', 'data/owt_train.txt', 32000)
+    tokenizer = Tokenizer(
+        'data/owt_train.txt', 32000, ['<|endoftext|>'], 'owt'
+    )
+    tokenizer.pre_tokenize()
+    tokenizer.bpe_merge()
+    tokenizer.dump()
 
 
 if __name__ == '__main__':
