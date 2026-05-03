@@ -227,8 +227,8 @@ def process_dataset(dataset_name, dataset_path, vocab_size):
 
 
 def main():
-    process_dataset('tinystory', '../data/TinyStoriesV2-GPT4-train.txt', 10000)
-    process_dataset('owt', '../data/owt_train.txt', 32000)
+    process_dataset('tinystory', 'data/TinyStoriesV2-GPT4-train.txt', 10000)
+    process_dataset('owt', 'data/owt_train.txt', 32000)
 
 
 if __name__ == '__main__':
