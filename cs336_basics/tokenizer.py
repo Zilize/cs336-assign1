@@ -1,9 +1,8 @@
+import os
 import regex as re
 from tqdm import tqdm
-
-text = """low low low low low
-lower lower widest widest widest
-newest newest newest newest newest newest"""
+from typing import BinaryIO
+from multiprocessing import Pool
 
 
 class Tokenizer:
@@ -11,12 +10,13 @@ class Tokenizer:
         self.input_path = input_path
         self.vocab_size = vocab_size
         self.special_tokens = special_tokens
+        self.num_processes = 4
 
         self.vocab: dict[bytes, int] = self._init_vocab()
         assert vocab_size >= len(self.vocab)
         self.merges: list[tuple[bytes, bytes]] = list()
 
-        self.build()
+        self._build()
 
     def _init_vocab(self):
         vocabulary = {bytes([i]): i for i in range(256)}
@@ -24,23 +24,77 @@ class Tokenizer:
             vocabulary[special_token.encode('utf-8')] = len(vocabulary)
         return vocabulary
 
-    def _pre_tokenize(self, input_text: str) -> dict[tuple[bytes, ...], int]:
-        split_pattern = '(' + '|'.join(re.escape(tok) for tok in self.special_tokens) + ')'
+    @staticmethod
+    def _find_chunk_boundaries(
+            file: BinaryIO,
+            desired_num_chunks: int,
+            split_special_token: bytes,
+    ) -> list[int]:
+        """
+        Chunk the file into parts that can be counted independently.
+        May return fewer chunks if the boundaries end up overlapping.
+        """
+        assert isinstance(split_special_token, bytes), "Must represent special token as a bytestring"
+
+        # Get total file size in bytes
+        file.seek(0, os.SEEK_END)
+        file_size = file.tell()
+        file.seek(0)
+
+        chunk_size = file_size // desired_num_chunks
+
+        # Initial guesses for chunk boundary locations, uniformly spaced
+        # Chunks start on previous index, don't include last index
+        chunk_boundaries = [i * chunk_size for i in range(desired_num_chunks + 1)]
+        chunk_boundaries[-1] = file_size
+
+        mini_chunk_size = 4096  # Read ahead by 4k bytes at a time
+
+        for bi in range(1, len(chunk_boundaries) - 1):
+            initial_position = chunk_boundaries[bi]
+            file.seek(initial_position)  # Start at boundary guess
+            while True:
+                mini_chunk = file.read(mini_chunk_size)  # Read a mini chunk
+
+                # If EOF, this boundary should be at the end of the file
+                if mini_chunk == b"":
+                    chunk_boundaries[bi] = file_size
+                    break
+
+                # Find the special token in the mini chunk
+                found_at = mini_chunk.find(split_special_token)
+                if found_at != -1:
+                    chunk_boundaries[bi] = initial_position + found_at
+                    break
+                initial_position += mini_chunk_size
+
+        # Make sure all boundaries are unique, but might be fewer than desired_num_chunks
+        return sorted(set(chunk_boundaries))
+
+    @staticmethod
+    def _pre_tokenize(args: tuple[str, tuple[int, int], list[str]]) -> dict[tuple[bytes, ...], int]:
+        input_path, scope, special_tokens = args
+        with open(input_path, "rb") as f:
+            start, end = scope
+            f.seek(start)
+            input_text = f.read(end - start).decode("utf-8", errors="ignore")
+
+        split_pattern = '(' + '|'.join(re.escape(tok) for tok in special_tokens) + ')'
         split_text_list = re.split(split_pattern, input_text)
 
         pre_tokenization_pattern = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
         pre_tokenization_pattern = re.compile(pre_tokenization_pattern)
 
         pre_token_list = list()
-        for split_text in split_text_list:
-            if split_text in self.special_tokens:
+        for split_text in tqdm(split_text_list):
+            if split_text in special_tokens:
                 continue
             split_text_pre_token_list = re.findall(pre_tokenization_pattern, split_text)
             pre_token_list.extend(split_text_pre_token_list)
 
         pre_token_list = [pre_token.encode('utf-8') for pre_token in pre_token_list]
         pre_tokens: dict[tuple[bytes, ...], int] = dict()
-        for pre_token in pre_token_list:
+        for pre_token in tqdm(pre_token_list):
             if len(pre_token) <= 1:
                 continue
             pre_token_tuple = tuple(pre_token[i:i+1] for i in range(len(pre_token)))
@@ -116,9 +170,29 @@ class Tokenizer:
         del frequency[merge_candidate]
         return new_pre_tokens, frequency
 
-    def build(self):
-        input_text = open(self.input_path, 'r', encoding='utf-8').read()
-        pre_tokens = self._pre_tokenize(input_text)
+    def _build(self):
+        args = list()
+        with open(self.input_path, "rb") as f:
+            boundaries = self._find_chunk_boundaries(f, self.num_processes, b"<|endoftext|>")
+            for start, end in zip(boundaries[:-1], boundaries[1:]):
+                args.append((
+                    self.input_path,
+                    (start, end),
+                    self.special_tokens
+                ))
+
+        with Pool(processes=self.num_processes) as pool:
+            results = pool.map(self._pre_tokenize, args)
+
+        key_set = set()
+        for result in results:
+            key_set.update(list(result.keys()))
+        pre_tokens = dict()
+        for key in key_set:
+            for result in results:
+                if key in result:
+                    pre_tokens[key] = pre_tokens.get(key, 0) + result[key]
+
         frequency: dict[tuple[bytes, bytes], int] = dict()
         for pre_token in pre_tokens:
             for i in range(len(pre_token) - 1):
