@@ -115,10 +115,11 @@ class Tokenizer:
     def _merge(
             pre_tokens: dict[tuple[bytes, ...], int],
             frequency: dict[tuple[bytes, bytes], int],
-            inverted: dict[tuple[bytes, bytes], dict[tuple[bytes, ...], int]],
+            inverted: dict[tuple[bytes, bytes], set[tuple[bytes, ...]]],
             merge_candidate: tuple[bytes, bytes]
     ):
-        for pre_token in inverted[merge_candidate]:
+        queue = list(inverted[merge_candidate])
+        for pre_token in queue:
             new_pre_token_list: list[bytes] = list()
 
             i = 0
@@ -157,7 +158,7 @@ class Tokenizer:
             if is_merged:
                 new_pre_token = tuple(new_pre_token_list)
 
-                # 1. 增量更新 frequency 表和 inverted 表
+                # 1. 增量更新 frequency
                 # 合并后消失的共现组，从频率表中减去；
                 for subtract_index_pair in subtract_index_pair_set:
                     subtract_item = (pre_token[subtract_index_pair[0]], pre_token[subtract_index_pair[1]])
@@ -165,19 +166,6 @@ class Tokenizer:
                     assert frequency[subtract_item] >= 0
                     if frequency[subtract_item] == 0:
                         del frequency[subtract_item]
-
-                    if subtract_item == merge_candidate:
-                        # 类似于 (o, o, o, o) 按 (o, o) 合并的时候会发生自指
-                        # 这时候不用管，因为最后 inverted[merge_candidate] 会被整个扔掉
-                        pass
-                    else:
-                        # 同一个 pre_token 里面可能出现相同的 pair 导致多次删除，~~用 discard 保证幂等性~~
-                        # 比如 (u, n, a, u, n), (A, w, w, w)
-                        inverted[subtract_item][pre_token] -= 1
-                        if inverted[subtract_item][pre_token] == 0:
-                            del inverted[subtract_item][pre_token]
-                            if len(inverted[subtract_item]) == 0:
-                                del inverted[subtract_item]
 
                 # 合并后新增的元素，构建共现组再调整频率表
                 add_index_pair_set = set()
@@ -195,23 +183,23 @@ class Tokenizer:
                     add_item = (new_pre_token_list[a], new_pre_token_list[b])
                     frequency[add_item] = frequency.get(add_item, 0) + pre_tokens[pre_token]
 
-                    assert add_item != merge_candidate
-                    pair_dict = inverted.setdefault(add_item, {})
-                    pair_dict[new_pre_token] = pair_dict.get(new_pre_token, 0) + 1
-
-                # 对于当前 new_pre_token 的所有 pair，到其索引列表中把 pre_token 更新为 new_pre_token
+                # 2. 统一更新倒排索引表
+                old_pair_set, new_pair_set = set(), set()
+                for i in range(len(pre_token) - 1):
+                    old_pair_set.add((pre_token[i], pre_token[i + 1]))
                 for i in range(len(new_pre_token) - 1):
-                    pair = (new_pre_token[i], new_pre_token[i + 1])
+                    new_pair_set.add((new_pre_token[i], new_pre_token[i + 1]))
+                removed_pairs = old_pair_set - new_pair_set
+                for removed_pair in removed_pairs:
+                    inverted[removed_pair].discard(pre_token)
+                # 对 new_pre_token 的所有 pair：
+                # 如果 pair 是已有的，把 pre_token 替换为 new_pre_token
+                # 如果 pair 是新增的，新增 new_pre_token
+                for pair in new_pair_set:
+                    inverted.setdefault(pair, set()).discard(pre_token)
+                    inverted.setdefault(pair, set()).add(new_pre_token)
 
-                    assert pair != merge_candidate
-                    # 这里可能会遇到新 pair，所以可能已经是 new_pre_token 而找不到 pre_token
-                    pair_dict = inverted[pair]
-                    if pre_token in pair_dict:
-                        count = pair_dict[pre_token]
-                        del pair_dict[pre_token]
-                        pair_dict[new_pre_token] = count
-
-                # 2. 就地修改 pre_tokens
+                # 3. 就地修改 pre_tokens
                 # 如果发生合并，才考虑换 key
                 new_pre_token_count = pre_tokens[pre_token]
                 del pre_tokens[pre_token]
@@ -259,15 +247,15 @@ class Tokenizer:
         # frequency: pair的频率统计表，用于找到频率最大的pair；
         #            其实可以用优先队列来做，排序同时考虑频次和key的字典序，不过这里不是瓶颈，所以先不考虑了
         # inverted: pair的倒排索引，用于快速找到合并所影响到的pre_token
-        #           一个 pair 可能在 pre_token 中出现多次，所以用计数器模式更合适
         frequency: dict[tuple[bytes, bytes], int] = dict()
-        inverted: dict[tuple[bytes, bytes], dict[tuple[bytes, ...], int]] = dict()
+        inverted: dict[tuple[bytes, bytes], set[tuple[bytes, ...]]] = dict()
         for pre_token in tqdm(pre_tokens):
             for i in range(len(pre_token) - 1):
                 pair = (pre_token[i], pre_token[i + 1])
                 frequency[pair] = frequency.get(pair, 0) + pre_tokens[pre_token]
-                pair_dict = inverted.setdefault(pair, {})
-                pair_dict[pre_token] = pair_dict.get(pre_token, 0) + 1
+                inverted.setdefault(pair, set()).add(pre_token)
+                # pair_dict = inverted.setdefault(pair, {})
+                # pair_dict[pre_token] = pair_dict.get(pre_token, 0) + 1
 
         with tqdm(total=self.vocab_size, initial=len(self.vocab), desc="BPE training") as pbar:
             while len(self.vocab) < self.vocab_size:
