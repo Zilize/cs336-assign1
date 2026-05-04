@@ -82,7 +82,7 @@ def main():
         TinyStoryConfig.cache_dir / "vocab.pkl",
         TinyStoryConfig.cache_dir / "merges.pkl",
         TinyStoryConfig.special_tokens)
-    ids = tokenizer.encode("Hello, World!")
+    ids = tokenizer.encode("the cat, the mouse, the dog")
     print(tokenizer.decode(ids))
 
 

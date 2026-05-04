@@ -46,7 +46,7 @@ def find_chunk_boundaries(
     return sorted(set(chunk_boundaries))
 
 
-def pre_tokenize_from_text(input_text: str, special_tokens: list[str]) -> dict[tuple[bytes, ...], int]:
+def pre_tokenize_from_text(input_text: str, special_tokens: list[str]) -> list[tuple[bytes, ...]]:
     split_pattern = '(' + '|'.join(re.escape(tok) for tok in special_tokens) + ')'
     split_text_list = re.split(split_pattern, input_text)
 
@@ -61,12 +61,10 @@ def pre_tokenize_from_text(input_text: str, special_tokens: list[str]) -> dict[t
         pre_token_list.extend(split_text_pre_token_list)
 
     pre_token_list = [pre_token.encode('utf-8') for pre_token in pre_token_list]
-    pre_tokens: dict[tuple[bytes, ...], int] = dict()
+    pre_tokens: list[tuple[bytes, ...]] = list()
     for pre_token in pre_token_list:
-        if len(pre_token) <= 1:
-            continue
         pre_token_tuple = tuple(pre_token[i:i + 1] for i in range(len(pre_token)))
-        pre_tokens[pre_token_tuple] = pre_tokens.get(pre_token_tuple, 0) + 1
+        pre_tokens.append(pre_token_tuple)
     # 可以返回预分词列表，但是以频率表的方式更节省空间
     return pre_tokens
 
@@ -81,4 +79,11 @@ def pre_tokenize_from_file(
         f.seek(start)
         input_text = f.read(end - start).decode("utf-8", errors="ignore")
 
-    return pre_tokenize_from_text(input_text, special_tokens)
+    pre_token_list = pre_tokenize_from_text(input_text, special_tokens)
+    pre_tokens: dict[tuple[bytes, ...], int] = dict()
+    for pre_token in pre_token_list:
+        if len(pre_token) <= 1:
+            continue
+        pre_tokens[pre_token] = pre_tokens.get(pre_token, 0) + 1
+    # 可以返回预分词列表，但是以频率表的方式更节省空间
+    return pre_tokens
