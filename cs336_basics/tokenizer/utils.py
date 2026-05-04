@@ -59,15 +59,23 @@ def pre_tokenize_from_text(input_text: str, special_tokens: list[str] | None) ->
     pre_token_list = list()
     for split_text in split_text_list:
         if special_tokens is not None and split_text in special_tokens:
-            continue
-        split_text_pre_token_list = re.findall(pre_tokenization_pattern, split_text)
-        pre_token_list.extend(split_text_pre_token_list)
+            # special tokens 不进行预分词
+            pre_token_list.append(split_text)
+        else:
+            split_text_pre_token_list = re.findall(pre_tokenization_pattern, split_text)
+            pre_token_list.extend(split_text_pre_token_list)
+
+    special_tokens_encoded = [token.encode('utf-8') for token in special_tokens] if special_tokens is not None else None
 
     pre_token_list = [pre_token.encode('utf-8') for pre_token in pre_token_list]
     pre_tokens: list[tuple[bytes, ...]] = list()
     for pre_token in pre_token_list:
-        pre_token_tuple = tuple(pre_token[i:i + 1] for i in range(len(pre_token)))
-        pre_tokens.append(pre_token_tuple)
+        if special_tokens_encoded is not None and pre_token in special_tokens_encoded:
+            # special tokens 完整保留，与单字节一样 tuple 长度为 1，跳过训练 merge
+            pre_tokens.append((pre_token,))
+        else:
+            pre_token_tuple = tuple(pre_token[i:i + 1] for i in range(len(pre_token)))
+            pre_tokens.append(pre_token_tuple)
     # 可以返回预分词列表，但是以频率表的方式更节省空间
     return pre_tokens
 
@@ -86,6 +94,7 @@ def pre_tokenize_from_file(
     pre_tokens: dict[tuple[bytes, ...], int] = dict()
     for pre_token in pre_token_list:
         if len(pre_token) <= 1:
+            # 这里包含两种情况：一种是单字节 unicode，一种是 special_token
             continue
         pre_tokens[pre_token] = pre_tokens.get(pre_token, 0) + 1
     # 可以返回预分词列表，但是以频率表的方式更节省空间
