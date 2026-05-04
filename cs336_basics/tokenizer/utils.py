@@ -1,6 +1,8 @@
 import regex as re
 from typing import BinaryIO
 
+from fontTools.designspaceLib import split
+
 
 def find_chunk_boundaries(
         file: BinaryIO,
@@ -46,16 +48,19 @@ def find_chunk_boundaries(
     return sorted(set(chunk_boundaries))
 
 
-def pre_tokenize_from_text(input_text: str, special_tokens: list[str]) -> list[tuple[bytes, ...]]:
-    split_pattern = '(' + '|'.join(re.escape(tok) for tok in special_tokens) + ')'
-    split_text_list = re.split(split_pattern, input_text)
+def pre_tokenize_from_text(input_text: str, special_tokens: list[str] | None) -> list[tuple[bytes, ...]]:
+    if special_tokens is not None:
+        split_pattern = '(' + '|'.join(re.escape(tok) for tok in special_tokens) + ')'
+        split_text_list = re.split(split_pattern, input_text)
+    else:
+        split_text_list = [input_text]
 
     pre_tokenization_pattern = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
     pre_tokenization_pattern = re.compile(pre_tokenization_pattern)
 
     pre_token_list = list()
     for split_text in split_text_list:
-        if split_text in special_tokens:
+        if special_tokens is not None and split_text in special_tokens:
             continue
         split_text_pre_token_list = re.findall(pre_tokenization_pattern, split_text)
         pre_token_list.extend(split_text_pre_token_list)

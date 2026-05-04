@@ -32,7 +32,6 @@ class Tokenizer:
         return cls(vocab, merges, special_tokens)
 
     def encode(self, text: str) -> list[int]:
-        assert self.special_tokens is not None
         pre_tokens = pre_tokenize_from_text(text, self.special_tokens)
 
         merged_pre_tokens = list()
