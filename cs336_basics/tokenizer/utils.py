@@ -48,6 +48,7 @@ def find_chunk_boundaries(
 
 def pre_tokenize_from_text(input_text: str, special_tokens: list[str] | None) -> list[tuple[bytes, ...]]:
     if special_tokens is not None:
+        sorted_special_tokens = sorted(special_tokens, key=lambda x: len(x), reverse=True)
         split_pattern = '(' + '|'.join(re.escape(tok) for tok in special_tokens) + ')'
         split_text_list = re.split(split_pattern, input_text)
     else:

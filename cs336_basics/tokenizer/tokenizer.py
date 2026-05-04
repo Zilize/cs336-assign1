@@ -73,7 +73,7 @@ class Tokenizer:
         result = bytes()
         for token_id in ids:
             result += self.vocab[token_id]
-        return result.decode()
+        return result.decode(errors='replace')
 
 
 def main():
