@@ -1,7 +1,9 @@
 import os
 import pickle as pkl
 from tqdm import tqdm
-from multiprocessing import Pool
+import multiprocessing as mp
+
+mp.set_start_method("spawn", force=True)
 
 from cs336_basics.config import *
 from cs336_basics.tokenizer.utils import *
@@ -162,7 +164,7 @@ class TokenizerBuilder:
                     self.special_tokens
                 ))
 
-            with Pool(processes=self.num_processes) as pool:
+            with mp.Pool(processes=self.num_processes) as pool:
                 results = pool.starmap(pre_tokenize_from_file, args)
                 for result in results:
                     for key in result:
