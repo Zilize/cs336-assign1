@@ -1,8 +1,6 @@
 import regex as re
 from typing import BinaryIO
 
-from fontTools.designspaceLib import split
-
 
 def find_chunk_boundaries(
         file: BinaryIO,
