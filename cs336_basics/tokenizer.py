@@ -115,7 +115,7 @@ class Tokenizer:
     def _merge(
             pre_tokens: dict[tuple[bytes, ...], int],
             frequency: dict[tuple[bytes, bytes], int],
-            inverted: dict[tuple[bytes, bytes], set[tuple[bytes, ...]]],
+            inverted: dict[tuple[bytes, bytes], dict[tuple[bytes, ...], int]],
             merge_candidate: tuple[bytes, bytes]
     ):
         for pre_token in inverted[merge_candidate]:
@@ -171,11 +171,13 @@ class Tokenizer:
                         # 这时候不用管，因为最后 inverted[merge_candidate] 会被整个扔掉
                         pass
                     else:
-                        # 同一个 pre_token 里面可能出现相同的 pair 导致多次删除，用 discard 保证幂等性
-                        # 比如 (u, n, a, u, n)
-                        inverted[subtract_item].discard(pre_token)
-                        if len(inverted[subtract_item]) == 0:
-                            del inverted[subtract_item]
+                        # 同一个 pre_token 里面可能出现相同的 pair 导致多次删除，~~用 discard 保证幂等性~~
+                        # 比如 (u, n, a, u, n), (A, w, w, w)
+                        inverted[subtract_item][pre_token] -= 1
+                        if inverted[subtract_item][pre_token] == 0:
+                            del inverted[subtract_item][pre_token]
+                            if len(inverted[subtract_item]) == 0:
+                                del inverted[subtract_item]
 
                 # 合并后新增的元素，构建共现组再调整频率表
                 add_index_pair_set = set()
@@ -194,38 +196,29 @@ class Tokenizer:
                     frequency[add_item] = frequency.get(add_item, 0) + pre_tokens[pre_token]
 
                     assert add_item != merge_candidate
-                    inverted.setdefault(add_item, set()).add(new_pre_token)  # 其实可以合并到下面去
+                    pair_dict = inverted.setdefault(add_item, {})
+                    pair_dict[new_pre_token] = pair_dict.get(new_pre_token, 0) + 1
 
                 # 对于当前 new_pre_token 的所有 pair，到其索引列表中把 pre_token 更新为 new_pre_token
                 for i in range(len(new_pre_token) - 1):
                     pair = (new_pre_token[i], new_pre_token[i + 1])
 
                     assert pair != merge_candidate
-                    # 这里可能会遇到新 pair 所以用 discard 保证幂等性
-                    inverted[pair].discard(pre_token)
-                    inverted[pair].add(new_pre_token)
+                    # 这里可能会遇到新 pair，所以可能已经是 new_pre_token 而找不到 pre_token
+                    pair_dict = inverted[pair]
+                    if pre_token in pair_dict:
+                        count = pair_dict[pre_token]
+                        del pair_dict[pre_token]
+                        pair_dict[new_pre_token] = count
 
                 # 2. 就地修改 pre_tokens
                 # 如果发生合并，才考虑换 key
-
-                # todo: for debug
-                # if pre_token == (b' ', b't', b'i', b'c', b'k', b'i', b'n', b'g'):
-                #     counter = 0
-                #     for a in merge_candidate_pre_tokens:
-                #         if a == (b' ', b't', b'i', b'c', b'k', b'i', b'n', b'g'):
-                #             counter += 1
-                #     pass
-
                 new_pre_token_count = pre_tokens[pre_token]
                 del pre_tokens[pre_token]
                 pre_tokens[new_pre_token] = new_pre_token_count
 
         del frequency[merge_candidate]
         del inverted[merge_candidate]
-
-        # todo: for debug
-        if merge_candidate == (b'\x80', b'\x93'):
-            pass
         return pre_tokens, frequency
 
     def _pre_tokenize_corpus(self) -> dict[tuple[bytes, ...], int]:
@@ -265,17 +258,16 @@ class Tokenizer:
         # 要增量式维护两个数据结构：
         # frequency: pair的频率统计表，用于找到频率最大的pair；
         #            其实可以用优先队列来做，排序同时考虑频次和key的字典序，不过这里不是瓶颈，所以先不考虑了
-        # inverted: pair的倒排索引，集合表示以去重，用于快速找到合并所影响到的pre_token
+        # inverted: pair的倒排索引，用于快速找到合并所影响到的pre_token
+        #           一个 pair 可能在 pre_token 中出现多次，所以用计数器模式更合适
         frequency: dict[tuple[bytes, bytes], int] = dict()
-        inverted: dict[tuple[bytes, bytes], set[tuple[bytes, ...]]] = dict()
+        inverted: dict[tuple[bytes, bytes], dict[tuple[bytes, ...], int]] = dict()
         for pre_token in tqdm(pre_tokens):
             for i in range(len(pre_token) - 1):
                 pair = (pre_token[i], pre_token[i + 1])
                 frequency[pair] = frequency.get(pair, 0) + pre_tokens[pre_token]
-                inverted.setdefault(pair, set()).add(pre_token)
-
-        # todo: for debug
-        a = inverted[(b'\x80', b'\x93')]
+                pair_dict = inverted.setdefault(pair, {})
+                pair_dict[pre_token] = pair_dict.get(pre_token, 0) + 1
 
         with tqdm(total=self.vocab_size, initial=len(self.vocab), desc="BPE training") as pbar:
             while len(self.vocab) < self.vocab_size:
@@ -331,6 +323,27 @@ class Tokenizer:
             assert self._pre_tokens is not None
             pre_tokens = self._pre_tokens
             self._pre_tokens = None
+
+        # todo: for debug
+        # 根据错误点构建了一个能偶现问题的小 pre_tokens 数据集
+        # inverted: dict[tuple[bytes, bytes], set[tuple[bytes, ...]]] = dict()
+        # for pre_token in tqdm(pre_tokens):
+        #     for i in range(len(pre_token) - 1):
+        #         pair = (pre_token[i], pre_token[i + 1])
+        #         inverted.setdefault(pair, set()).add(pre_token)
+        #
+        # target_pair = (b'w', b'w')
+        # target_pre_tokens = dict()
+        # extend_pairs = set()
+        # for pre_token_key in inverted[target_pair]:
+        #     target_pre_tokens[pre_token_key]  = pre_tokens[pre_token_key]
+        #     for i in range(len(pre_token_key) - 1):
+        #         pair = (pre_token_key[i], pre_token_key[i + 1])
+        #         extend_pairs.add(pair)
+        # for extend_pair in extend_pairs:
+        #     for pre_token_key in inverted[extend_pair]:
+        #         target_pre_tokens[pre_token_key] = pre_tokens[pre_token_key]
+
         self._train_bpe_merges(pre_tokens)
 
     def build(self) -> None:
@@ -349,7 +362,7 @@ class Tokenizer:
 
 def main():
     tokenizer = Tokenizer(
-        '../data/TinyStoriesV2-GPT4-train.txt', 32000, ['<|endoftext|>'], 'tinystory', num_iterations=50
+        '../data/owt_train.txt', 32000, ['<|endoftext|>'], 'owt', num_iterations=10
     )
     # tokenizer.pre_tokenize()
     tokenizer.bpe_merge()
