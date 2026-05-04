@@ -13,7 +13,7 @@ class TokenizerBuilder:
         input_path: str | os.PathLike[str],
         vocab_size: int,
         special_tokens: list[str],
-        cache_dir: str | os.PathLike[str],
+        cache_dir: str | os.PathLike[str] | None = None,
         num_iterations: int = 10,
         num_processes: int = 20,
     ):
@@ -25,14 +25,16 @@ class TokenizerBuilder:
         self.num_iterations = num_iterations
         self.num_processes = num_processes
 
-        self.vocab: dict[bytes, int] = self._init_vocab()
+        self.vocab: dict[int, bytes] = self._init_vocab()
         assert vocab_size >= len(self.vocab)
         self.merges: list[tuple[bytes, bytes]] = list()
 
-    def _init_vocab(self):
-        vocabulary = {bytes([i]): i for i in range(256)}
+        self.pre_tokens: dict[tuple[bytes, ...], int] | None = None
+
+    def _init_vocab(self) -> dict[int, bytes]:
+        vocabulary = {i: bytes([i]) for i in range(256)}
         for special_token in self.special_tokens:
-            vocabulary[special_token.encode('utf-8')] = len(vocabulary)
+            vocabulary[len(vocabulary)] = special_token.encode('utf-8')
         return vocabulary
 
     @staticmethod
@@ -193,43 +195,48 @@ class TokenizerBuilder:
                 merge_candidate: tuple[bytes, bytes] = max(candidates)
 
                 pre_tokens, frequency = self._merge(pre_tokens, frequency, inverted, merge_candidate)
-                self.vocab[merge_candidate[0] + merge_candidate[1]] = len(self.vocab)
+                self.vocab[len(self.vocab)] = merge_candidate[0] + merge_candidate[1]
                 self.merges.append(merge_candidate)
                 pbar.update(1)
 
-    def _default_pre_token_cache_path(self) -> str:
-        return os.path.join(self.cache_dir, "pre_tokens.pkl")
-
     def pre_tokenize(self) -> None:
-        os.makedirs(self.cache_dir, exist_ok=True)
-        path = self._default_pre_token_cache_path()
+        self.pre_tokens = self._pre_tokenize_parallel()
 
-        pre_tokens = self._pre_tokenize_parallel()
-        with open(path, "wb") as f:
-            pkl.dump(
-                {
-                    "vocab_size": self.vocab_size,
-                    "special_tokens": self.special_tokens,
-                    "pre_tokens": pre_tokens,
-                },
-                f,
-            )
+        if self.cache_dir is not None:
+            os.makedirs(self.cache_dir, exist_ok=True)
+            path = os.path.join(self.cache_dir, "pre_tokens.pkl")
+            with open(path, "wb") as file:
+                pkl.dump(
+                    {
+                        "vocab_size": self.vocab_size,
+                        "special_tokens": self.special_tokens,
+                        "pre_tokens": self.pre_tokens,
+                    },
+                    file,
+                )
 
     def merge(self) -> None:
-        path = self._default_pre_token_cache_path()
-        with open(path, "rb") as f:
-            data = pkl.load(f)
-        assert data["vocab_size"] == self.vocab_size and data["special_tokens"] == self.special_tokens
-        pre_tokens = data["pre_tokens"]
-        self._bpe_merge(pre_tokens)
+        if self.pre_tokens is None:
+            if self.cache_dir is not None:
+                path = os.path.join(self.cache_dir, "pre_tokens.pkl")
+                with open(path, "rb") as f:
+                    data = pkl.load(f)
+                assert data["vocab_size"] == self.vocab_size and data["special_tokens"] == self.special_tokens
+                self.pre_tokens = data["pre_tokens"]
+            else:
+                raise FileNotFoundError("cache dir is None")
+        assert self.pre_tokens is not None
+        self._bpe_merge(self.pre_tokens)
 
     def dump(self) -> None:
-        os.makedirs(self.cache_dir, exist_ok=True)
-
-        with open(os.path.join(self.cache_dir, 'vocab.pkl'), 'wb') as f:
-            pkl.dump(self.vocab, f)
-        with open(os.path.join(self.cache_dir, 'merges.pkl'), 'wb') as f:
-            pkl.dump(self.merges, f)
+        if self.cache_dir is not None:
+            os.makedirs(self.cache_dir, exist_ok=True)
+            with open(os.path.join(self.cache_dir, 'vocab.pkl'), 'wb') as f:
+                pkl.dump(self.vocab, f)
+            with open(os.path.join(self.cache_dir, 'merges.pkl'), 'wb') as f:
+                pkl.dump(self.merges, f)
+        else:
+             raise FileNotFoundError("cache dir is None")
 
 
 def build_tokenizer(config: DatasetConfig):

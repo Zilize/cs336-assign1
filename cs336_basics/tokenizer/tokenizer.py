@@ -8,7 +8,7 @@ from cs336_basics.tokenizer.utils import pre_tokenize_from_text
 class Tokenizer:
     def __init__(
             self,
-            vocab: dict[bytes, int],
+            vocab: dict[int, bytes],
             merges: list[tuple[bytes, bytes]],
             special_tokens: list[str] | None=None
     ):
@@ -61,7 +61,7 @@ class Tokenizer:
 
         result = list()
         for merged_pre_token in merged_pre_tokens:
-            result.extend([self.vocab[item] for item in merged_pre_token])
+            result.extend([self.inverted_vocab[item] for item in merged_pre_token])
         return result
 
     def encode_iterable(self, iterable: Iterable[str]) -> Iterator[int]:
@@ -73,7 +73,7 @@ class Tokenizer:
     def decode(self, ids: list[int]) -> str:
         result = bytes()
         for token_id in ids:
-            result += self.inverted_vocab[token_id]
+            result += self.vocab[token_id]
         return result.decode()
 
 
