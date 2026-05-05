@@ -47,25 +47,36 @@ class Tokenizer:
     ) -> list[int]:
         pre_tokens = pre_tokenize_from_text(text, special_tokens)
 
+        # 数据中一般存在大量的重复 pre-tokens，添加缓存在 TinyStoryValid 上能快三倍
+        merge_cache: dict[tuple[bytes, ...], tuple[bytes, ...]] = dict()
+
         merged_pre_tokens = list()
         for pre_token in pre_tokens:
-            while len(pre_token) > 1:
-                pairs = [(pre_token[i], pre_token[i + 1]) for i in range(len(pre_token) - 1)]
-                merge_candidate = min(pairs, key=lambda p: merge_rank.get(p, float("inf")))
-                if merge_candidate not in merge_rank:
-                    break
+            if pre_token in merge_cache:
+                pre_token = merge_cache[pre_token]
+            else:
+                pre_token_key = pre_token
+                while len(pre_token) > 1:
+                    pairs = [(pre_token[i], pre_token[i + 1]) for i in range(len(pre_token) - 1)]
+                    merge_candidate = min(pairs, key=lambda p: merge_rank.get(p, float("inf")))
+                    if merge_candidate not in merge_rank:
+                        break
 
-                i = 0
-                new_pre_token_list = list()
-                while i < len(pre_token):
-                    if i < len(pre_token) - 1 and (pre_token[i], pre_token[i + 1]) == merge_candidate:
-                        merged = merge_candidate[0] + merge_candidate[1]
-                        new_pre_token_list.append(merged)
-                        i += 2
-                    else:
-                        new_pre_token_list.append(pre_token[i])
-                        i += 1
-                pre_token = tuple(new_pre_token_list)
+                    i = 0
+                    new_pre_token_list = list()
+                    while i < len(pre_token):
+                        if i < len(pre_token) - 1 and (pre_token[i], pre_token[i + 1]) == merge_candidate:
+                            merged = merge_candidate[0] + merge_candidate[1]
+                            new_pre_token_list.append(merged)
+                            i += 2
+                        else:
+                            new_pre_token_list.append(pre_token[i])
+                            i += 1
+                    pre_token = tuple(new_pre_token_list)
+
+                # pre_token 经过多轮合并完了，根据原有 key 落缓存
+                merge_cache[pre_token_key] = pre_token
+
             merged_pre_tokens.append(pre_token)
 
         result = list()
@@ -195,35 +206,26 @@ def tokenize_dataset():
         TinyStoryConfig.cache_dir / "vocab.pkl",
         TinyStoryConfig.cache_dir / "merges.pkl",
         TinyStoryConfig.special_tokens)
-    # tokenizer.encode_from_file(
-    #     TinyStoryConfig.train_file,
-    #     TinyStoryConfig.cache_dir / "train_encoded.bin",
-    #     50,
-    #     16
-    # )
-    # tokenizer.decode_from_file(
-    #     TinyStoryConfig.cache_dir / "train_encoded.bin",
-    #     TinyStoryConfig.cache_dir / "train_decoded.txt",
-    #     50,
-    #     16
-    # )
-
-    # todo: for debug
-    import time
-    start_time = time.perf_counter()
-
-    # tokenizer.encode_from_file(
-    #     TinyStoryConfig.valid_file,
-    #     TinyStoryConfig.cache_dir / "valid_encoded.bin"
-    # )
+    tokenizer.encode_from_file(
+        TinyStoryConfig.train_file,
+        TinyStoryConfig.cache_dir / "train_encoded.bin",
+        50,
+        16
+    )
+    tokenizer.decode_from_file(
+        TinyStoryConfig.cache_dir / "train_encoded.bin",
+        TinyStoryConfig.cache_dir / "train_decoded.txt",
+        50,
+        16
+    )
+    tokenizer.encode_from_file(
+        TinyStoryConfig.valid_file,
+        TinyStoryConfig.cache_dir / "valid_encoded.bin"
+    )
     tokenizer.decode_from_file(
         TinyStoryConfig.cache_dir / "valid_encoded.bin",
         TinyStoryConfig.cache_dir / "valid_decoded.txt"
     )
-
-    end_time = time.perf_counter()
-
-    print(f"程序运行耗时: {end_time - start_time:.6f} 秒")
 
 
 if __name__ == '__main__':
