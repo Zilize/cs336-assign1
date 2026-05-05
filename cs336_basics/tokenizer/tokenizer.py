@@ -1,5 +1,5 @@
 import pickle as pkl
-from typing import Iterable, Iterator
+from collections.abc import Iterable, Iterator
 
 from cs336_basics.config import TinyStoryConfig
 from cs336_basics.tokenizer.utils import pre_tokenize_from_text
@@ -66,11 +66,10 @@ class Tokenizer:
     def encode_iterable(self, iterable: Iterable[str]) -> Iterator[int]:
         for it in iterable:
             token_ids = self.encode(it)
-            for token_id in token_ids:
-                yield token_id
+            yield from token_ids
 
     def decode(self, ids: list[int]) -> str:
-        result = bytes()
+        result = b''
         for token_id in ids:
             result += self.vocab[token_id]
         return result.decode(errors='replace')

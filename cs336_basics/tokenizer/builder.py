@@ -3,10 +3,11 @@ import pickle as pkl
 from tqdm import tqdm
 import multiprocessing as mp
 
-mp.set_start_method("spawn", force=True)
+from cs336_basics.config import DatasetConfig, TinyStoryConfig, OWTConfig
+from cs336_basics.tokenizer.utils import find_chunk_boundaries, pre_tokenize_from_file
 
-from cs336_basics.config import *
-from cs336_basics.tokenizer.utils import *
+
+mp.set_start_method("spawn", force=True)
 
 
 class TokenizerBuilder:
@@ -54,10 +55,8 @@ class TokenizerBuilder:
             subtract_index_pair_set = set()  # index in pre_token
             add_index_set: set[int] = set()  # index in new_pre_token_list
 
-            is_merged = False
             while i < len(pre_token):
                 if i < len(pre_token) - 1 and (pre_token[i], pre_token[i + 1]) == merge_candidate:
-                    is_merged = True
                     merged = merge_candidate[0] + merge_candidate[1]
                     new_pre_token_list.append(merged)
 
@@ -82,56 +81,54 @@ class TokenizerBuilder:
                     new_pre_token_list.append(pre_token[i])
                     i += 1
 
-            assert is_merged == True
-            if is_merged:
-                new_pre_token = tuple(new_pre_token_list)
+            new_pre_token = tuple(new_pre_token_list)
 
-                # 1. 增量更新 frequency
-                # 合并后消失的共现组，从频率表中减去；
-                for subtract_index_pair in subtract_index_pair_set:
-                    subtract_item = (pre_token[subtract_index_pair[0]], pre_token[subtract_index_pair[1]])
-                    frequency[subtract_item] -= pre_tokens[pre_token]
-                    assert frequency[subtract_item] >= 0
-                    if frequency[subtract_item] == 0:
-                        del frequency[subtract_item]
+            # 1. 增量更新 frequency
+            # 合并后消失的共现组，从频率表中减去；
+            for subtract_index_pair in subtract_index_pair_set:
+                subtract_item = (pre_token[subtract_index_pair[0]], pre_token[subtract_index_pair[1]])
+                frequency[subtract_item] -= pre_tokens[pre_token]
+                assert frequency[subtract_item] >= 0
+                if frequency[subtract_item] == 0:
+                    del frequency[subtract_item]
 
-                # 合并后新增的元素，构建共现组再调整频率表
-                add_index_pair_set = set()
-                for add_index in add_index_set:
-                    if add_index > 0:
-                        add_index_pair = (add_index - 1, add_index)
-                        add_index_pair_set.add(add_index_pair)
-                    if add_index + 1 <= len(new_pre_token_list) - 1:
-                        add_index_pair = (add_index, add_index + 1)
-                        add_index_pair_set.add(add_index_pair)
-                for add_index_pair in add_index_pair_set:
-                    # PyCharm 静态分析有点问题，故拆开来写
-                    a: int = add_index_pair[0]
-                    b: int = add_index_pair[1]
-                    add_item = (new_pre_token_list[a], new_pre_token_list[b])
-                    frequency[add_item] = frequency.get(add_item, 0) + pre_tokens[pre_token]
+            # 合并后新增的元素，构建共现组再调整频率表
+            add_index_pair_set = set()
+            for add_index in add_index_set:
+                if add_index > 0:
+                    add_index_pair = (add_index - 1, add_index)
+                    add_index_pair_set.add(add_index_pair)
+                if add_index + 1 <= len(new_pre_token_list) - 1:
+                    add_index_pair = (add_index, add_index + 1)
+                    add_index_pair_set.add(add_index_pair)
+            for add_index_pair in add_index_pair_set:
+                # PyCharm 静态分析有点问题，故拆开来写
+                a: int = add_index_pair[0]
+                b: int = add_index_pair[1]
+                add_item = (new_pre_token_list[a], new_pre_token_list[b])
+                frequency[add_item] = frequency.get(add_item, 0) + pre_tokens[pre_token]
 
-                # 2. 统一更新倒排索引表
-                old_pair_set, new_pair_set = set(), set()
-                for i in range(len(pre_token) - 1):
-                    old_pair_set.add((pre_token[i], pre_token[i + 1]))
-                for i in range(len(new_pre_token) - 1):
-                    new_pair_set.add((new_pre_token[i], new_pre_token[i + 1]))
-                removed_pairs = old_pair_set - new_pair_set
-                for removed_pair in removed_pairs:
-                    inverted[removed_pair].discard(pre_token)
-                # 对 new_pre_token 的所有 pair：
-                # 如果 pair 是已有的，把 pre_token 替换为 new_pre_token
-                # 如果 pair 是新增的，新增 new_pre_token
-                for pair in new_pair_set:
-                    inverted.setdefault(pair, set()).discard(pre_token)
-                    inverted.setdefault(pair, set()).add(new_pre_token)
+            # 2. 统一更新倒排索引表
+            old_pair_set, new_pair_set = set(), set()
+            for i in range(len(pre_token) - 1):
+                old_pair_set.add((pre_token[i], pre_token[i + 1]))
+            for i in range(len(new_pre_token) - 1):
+                new_pair_set.add((new_pre_token[i], new_pre_token[i + 1]))
+            removed_pairs = old_pair_set - new_pair_set
+            for removed_pair in removed_pairs:
+                inverted[removed_pair].discard(pre_token)
+            # 对 new_pre_token 的所有 pair：
+            # 如果 pair 是已有的，把 pre_token 替换为 new_pre_token
+            # 如果 pair 是新增的，新增 new_pre_token
+            for pair in new_pair_set:
+                inverted.setdefault(pair, set()).discard(pre_token)
+                inverted.setdefault(pair, set()).add(new_pre_token)
 
-                # 3. 就地修改 pre_tokens
-                # 如果发生合并，才考虑换 key
-                new_pre_token_count = pre_tokens[pre_token]
-                del pre_tokens[pre_token]
-                pre_tokens[new_pre_token] = new_pre_token_count
+            # 3. 就地修改 pre_tokens
+            # 如果发生合并，才考虑换 key
+            new_pre_token_count = pre_tokens[pre_token]
+            del pre_tokens[pre_token]
+            pre_tokens[new_pre_token] = new_pre_token_count
 
         del frequency[merge_candidate]
         del inverted[merge_candidate]
@@ -252,4 +249,4 @@ def build_tokenizer(config: DatasetConfig):
 
 if __name__ == '__main__':
     build_tokenizer(TinyStoryConfig)
-    # build_tokenizer(OWTConfig)
+    build_tokenizer(OWTConfig)
