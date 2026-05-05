@@ -4,7 +4,7 @@ from tqdm import tqdm
 import multiprocessing as mp
 
 from cs336_basics.config import DatasetConfig, TinyStoryConfig, OWTConfig
-from cs336_basics.tokenizer.utils import find_chunk_boundaries, pre_tokenize_from_file
+from cs336_basics.tokenizer.utils import find_nested_chunk_boundaries, pre_tokenize_from_file
 
 
 mp.set_start_method("spawn", force=True)
@@ -20,6 +20,8 @@ class TokenizerBuilder:
         num_iterations: int = 10,
         num_processes: int = 20,
     ):
+        # 固定使用了 16 位编码，对词表大小有限制
+        assert vocab_size <= 65535
         self.input_path = input_path
         self.vocab_size = vocab_size
         self.special_tokens = special_tokens
@@ -135,20 +137,7 @@ class TokenizerBuilder:
         return pre_tokens, frequency
 
     def _pre_tokenize_parallel(self) -> dict[tuple[bytes, ...], int]:
-        boundaries_list: list[list[tuple[int, int]]] = list()
-        with open(self.input_path, "rb") as file:
-            # Get total file size in bytes
-            file.seek(0, os.SEEK_END)
-            file_size = file.tell()
-            file.seek(0)
-
-            major_boundaries = find_chunk_boundaries(file, 0, file_size, self.num_iterations, b"<|endoftext|>")
-            for start, end in zip(major_boundaries[:-1], major_boundaries[1:]):
-                boundaries = list()
-                minor_boundaries = find_chunk_boundaries(file, start, end, self.num_processes, b"<|endoftext|>")
-                for minor_start, minor_end in zip(minor_boundaries[:-1], minor_boundaries[1:]):
-                    boundaries.append((minor_start, minor_end))
-                boundaries_list.append(boundaries)
+        boundaries_list = find_nested_chunk_boundaries(self.input_path, self.num_iterations, self.num_processes)
 
         pre_tokens = dict()
         for boundaries in tqdm(boundaries_list):
@@ -249,4 +238,4 @@ def build_tokenizer(config: DatasetConfig):
 
 if __name__ == '__main__':
     build_tokenizer(TinyStoryConfig)
-    build_tokenizer(OWTConfig)
+    # build_tokenizer(OWTConfig)

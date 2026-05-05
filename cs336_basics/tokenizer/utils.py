@@ -1,8 +1,10 @@
+import os
+
 import regex as re
 from typing import BinaryIO
 
 
-def find_chunk_boundaries(
+def _find_chunk_boundaries(
         file: BinaryIO,
         start: int,
         end: int,
@@ -46,6 +48,28 @@ def find_chunk_boundaries(
     return sorted(set(chunk_boundaries))
 
 
+def find_nested_chunk_boundaries(
+        input_path: str | os.PathLike[str],
+        num_iterations: int,
+        num_processes: int
+) -> list[list[tuple[int, int]]]:
+    boundaries_list: list[list[tuple[int, int]]] = list()
+    with open(input_path, "rb") as file:
+        # Get total file size in bytes
+        file.seek(0, os.SEEK_END)
+        file_size = file.tell()
+        file.seek(0)
+
+        major_boundaries = _find_chunk_boundaries(file, 0, file_size, num_iterations, b"<|endoftext|>")
+        for start, end in zip(major_boundaries[:-1], major_boundaries[1:]):
+            boundaries = list()
+            minor_boundaries = _find_chunk_boundaries(file, start, end, num_processes, b"<|endoftext|>")
+            for minor_start, minor_end in zip(minor_boundaries[:-1], minor_boundaries[1:]):
+                boundaries.append((minor_start, minor_end))
+            boundaries_list.append(boundaries)
+    return boundaries_list
+
+
 def pre_tokenize_from_text(input_text: str, special_tokens: list[str] | None) -> list[tuple[bytes, ...]]:
     if special_tokens is not None:
         # 排序是为了 special_tokens = ["<|endoftext|>", "<|endoftext|><|endoftext|>"] 时确保能正确处理
@@ -83,7 +107,7 @@ def pre_tokenize_from_text(input_text: str, special_tokens: list[str] | None) ->
 
 
 def pre_tokenize_from_file(
-        input_path: str,
+        input_path: str | os.PathLike[str],
         start: int,
         end: int,
         special_tokens: list[str]
