@@ -140,17 +140,16 @@ class TokenizerBuilder:
         boundaries_list = find_nested_chunk_boundaries(self.input_path, self.num_iterations, self.num_processes)
 
         pre_tokens = dict()
-        for boundaries in tqdm(boundaries_list):
-            args = list()
-            for boundary in boundaries:
-                args.append((
-                    self.input_path,
-                    boundary[0],
-                    boundary[1],
-                    self.special_tokens
-                ))
-
-            with mp.Pool(processes=self.num_processes) as pool:
+        with mp.Pool(processes=self.num_processes) as pool:
+            for boundaries in tqdm(boundaries_list):
+                args = list()
+                for boundary in boundaries:
+                    args.append((
+                        self.input_path,
+                        boundary[0],
+                        boundary[1],
+                        self.special_tokens
+                    ))
                 results = pool.starmap(pre_tokenize_from_file, args)
                 for result in results:
                     for key in result:

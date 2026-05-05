@@ -110,27 +110,24 @@ class Tokenizer:
         boundaries_list = find_nested_chunk_boundaries(input_path, num_iterations, num_processes)
 
         with open(output_path, 'wb') as output_file:
-            for boundaries in tqdm(boundaries_list):
-                args = list()
-                for boundary in boundaries:
-                    args.append((
-                        input_path,
-                        boundary[0],
-                        boundary[1],
-                        self.special_tokens,
-                        self.merge_rank,
-                        self.inverted_vocab
-                    ))
-
-                with mp.Pool(processes=num_processes) as pool:
+            with mp.Pool(processes=num_processes) as pool:
+                for boundaries in tqdm(boundaries_list):
+                    args = list()
+                    for boundary in boundaries:
+                        args.append((
+                            input_path,
+                            boundary[0],
+                            boundary[1],
+                            self.special_tokens,
+                            self.merge_rank,
+                            self.inverted_vocab
+                        ))
                     results = pool.starmap(self._encode_impl_from_file, args)
                     for result in results:
                         array.array("H", result).tofile(output_file)
 
     def decode(self, ids: list[int]) -> str:
-        result = b''
-        for token_id in ids:
-            result += self.vocab[token_id]
+        result = b''.join(self.vocab[token_id] for token_id in ids)
         return result.decode(errors='replace')
 
     @staticmethod
@@ -143,13 +140,16 @@ class Tokenizer:
         with open(input_path, "rb") as f:
             f.seek(start)
             data = f.read(end - start)
-        ids = array.array("H", data).tolist()
+        ids = array.array("H", data)
 
-        result = b''
-        for token_id in ids:
-            result += vocab[token_id]
         # 返回 bytes 直接以 wb 形式写入文件规避编码冲突
-        return result
+        return b''.join(vocab[token_id] for token_id in ids)
+
+        # 反面案例留档：bytes 和 str 都是 immutable 量，会反复分配堆上空间
+        # result = b''
+        # for token_id in ids:
+        #     result += vocab[token_id]
+        # return result
 
     def decode_from_file(
             self,
@@ -175,17 +175,16 @@ class Tokenizer:
             boundaries_list.append(list(zip(minor_boundaries[:-1], minor_boundaries[1:])))
 
         with open(output_path, 'wb') as output_file:
-            for boundaries in tqdm(boundaries_list):
-                args = list()
-                for boundary in boundaries:
-                    args.append((
-                        input_path,
-                        boundary[0],
-                        boundary[1],
-                        self.vocab
-                    ))
-
-                with mp.Pool(processes=num_processes) as pool:
+            with mp.Pool(processes=num_processes) as pool:
+                for boundaries in tqdm(boundaries_list):
+                    args = list()
+                    for boundary in boundaries:
+                        args.append((
+                            input_path,
+                            boundary[0],
+                            boundary[1],
+                            self.vocab
+                        ))
                     results = pool.starmap(self._decode_impl_from_file, args)
                     for result in results:
                         output_file.write(result)
@@ -196,14 +195,35 @@ def tokenize_dataset():
         TinyStoryConfig.cache_dir / "vocab.pkl",
         TinyStoryConfig.cache_dir / "merges.pkl",
         TinyStoryConfig.special_tokens)
-    tokenizer.encode_from_file(
-        TinyStoryConfig.valid_file,
-        TinyStoryConfig.cache_dir / "valid_encoded.bin"
-    )
+    # tokenizer.encode_from_file(
+    #     TinyStoryConfig.train_file,
+    #     TinyStoryConfig.cache_dir / "train_encoded.bin",
+    #     50,
+    #     16
+    # )
+    # tokenizer.decode_from_file(
+    #     TinyStoryConfig.cache_dir / "train_encoded.bin",
+    #     TinyStoryConfig.cache_dir / "train_decoded.txt",
+    #     50,
+    #     16
+    # )
+
+    # todo: for debug
+    import time
+    start_time = time.perf_counter()
+
+    # tokenizer.encode_from_file(
+    #     TinyStoryConfig.valid_file,
+    #     TinyStoryConfig.cache_dir / "valid_encoded.bin"
+    # )
     tokenizer.decode_from_file(
         TinyStoryConfig.cache_dir / "valid_encoded.bin",
         TinyStoryConfig.cache_dir / "valid_decoded.txt"
     )
+
+    end_time = time.perf_counter()
+
+    print(f"程序运行耗时: {end_time - start_time:.6f} 秒")
 
 
 if __name__ == '__main__':
