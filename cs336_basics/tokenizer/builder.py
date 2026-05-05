@@ -2,6 +2,7 @@ import os
 import pickle as pkl
 from tqdm import tqdm
 import multiprocessing as mp
+from sortedcontainers import SortedSet
 
 from cs336_basics.config import DatasetConfig, TinyStoryConfig, OWTConfig
 from cs336_basics.tokenizer.utils import find_nested_chunk_boundaries, pre_tokenize_from_file
@@ -46,6 +47,7 @@ class TokenizerBuilder:
     def _merge(
             pre_tokens: dict[tuple[bytes, ...], int],
             frequency: dict[tuple[bytes, bytes], int],
+            sorted_pairs: SortedSet,
             inverted: dict[tuple[bytes, bytes], set[tuple[bytes, ...]]],
             merge_candidate: tuple[bytes, bytes]
     ):
@@ -89,10 +91,15 @@ class TokenizerBuilder:
             # 合并后消失的共现组，从频率表中减去；
             for subtract_index_pair in subtract_index_pair_set:
                 subtract_item = (pre_token[subtract_index_pair[0]], pre_token[subtract_index_pair[1]])
+                previous_sorted_pair = (frequency[subtract_item], subtract_item)
                 frequency[subtract_item] -= pre_tokens[pre_token]
-                assert frequency[subtract_item] >= 0
+                sorted_pairs.remove(previous_sorted_pair)
+
                 if frequency[subtract_item] == 0:
                     del frequency[subtract_item]
+                else:
+                    next_sorted_pair = (frequency[subtract_item], subtract_item)
+                    sorted_pairs.add(next_sorted_pair)
 
             # 合并后新增的元素，构建共现组再调整频率表
             add_index_pair_set = set()
@@ -108,7 +115,16 @@ class TokenizerBuilder:
                 a: int = add_index_pair[0]
                 b: int = add_index_pair[1]
                 add_item = (new_pre_token_list[a], new_pre_token_list[b])
-                frequency[add_item] = frequency.get(add_item, 0) + pre_tokens[pre_token]
+                if add_item in frequency:
+                    previous_sorted_pair = (frequency[add_item], add_item)
+                    frequency[add_item] += pre_tokens[pre_token]
+                    sorted_pairs.remove(previous_sorted_pair)
+
+                    next_sorted_pair = (frequency[add_item], add_item)
+                    sorted_pairs.add(next_sorted_pair)
+                else:
+                    frequency[add_item] = pre_tokens[pre_token]
+                    sorted_pairs.add((frequency[add_item], add_item))
 
             # 2. 统一更新倒排索引表
             old_pair_set, new_pair_set = set(), set()
@@ -132,6 +148,8 @@ class TokenizerBuilder:
             del pre_tokens[pre_token]
             pre_tokens[new_pre_token] = new_pre_token_count
 
+        previous_sorted_pair = (frequency[merge_candidate], merge_candidate)
+        sorted_pairs.remove(previous_sorted_pair)
         del frequency[merge_candidate]
         del inverted[merge_candidate]
         return pre_tokens, frequency
@@ -158,9 +176,9 @@ class TokenizerBuilder:
 
     def _bpe_merge(self, pre_tokens: dict[tuple[bytes, ...], int]) -> None:
         # 要增量式维护两个数据结构：
-        # frequency: pair的频率统计表，用于找到频率最大的pair；
-        #            其实可以用优先队列来做，排序同时考虑频次和key的字典序，不过这里不是瓶颈，所以先不考虑了
-        # inverted: pair的倒排索引，用于快速找到合并所影响到的pre_token
+        # frequency: pair 的频率统计表，用于找到频率最大的 pair；
+        # sorted_pairs: frequency 用来找最大值太慢了，所以加一个辅助数据结构以便在 log(n) 内找到最值
+        # inverted: pair 的倒排索引，用于快速找到合并所影响到的 pre_token
         frequency: dict[tuple[bytes, bytes], int] = dict()
         inverted: dict[tuple[bytes, bytes], set[tuple[bytes, ...]]] = dict()
         for pre_token in tqdm(pre_tokens):
@@ -168,20 +186,18 @@ class TokenizerBuilder:
                 pair = (pre_token[i], pre_token[i + 1])
                 frequency[pair] = frequency.get(pair, 0) + pre_tokens[pre_token]
                 inverted.setdefault(pair, set()).add(pre_token)
+        sorted_pairs = SortedSet()  # element type: tuple[int, tuple[bytes, bytes]]
+        for pair in frequency:
+            sorted_pairs.add((frequency[pair], pair))
 
         with tqdm(total=self.vocab_size, initial=len(self.vocab), desc="BPE training") as pbar:
             while len(self.vocab) < self.vocab_size:
                 if len(frequency) <= 0:
                     # 对于小数据集，可能达成每个 pre_token 都合并得只剩一个 bytes，提前退出
                     break
-                max_frequency = max(frequency.values())
-                candidates = list()
-                for pair in frequency:
-                    if frequency[pair] == max_frequency:
-                        candidates.append(pair)
-                merge_candidate: tuple[bytes, bytes] = max(candidates)
+                merge_candidate = sorted_pairs[-1][1]
 
-                pre_tokens, frequency = self._merge(pre_tokens, frequency, inverted, merge_candidate)
+                pre_tokens, frequency = self._merge(pre_tokens, frequency, sorted_pairs, inverted, merge_candidate)
                 self.vocab[len(self.vocab)] = merge_candidate[0] + merge_candidate[1]
                 self.merges.append(merge_candidate)
                 pbar.update(1)
@@ -237,4 +253,4 @@ def build_tokenizer(config: DatasetConfig):
 
 if __name__ == '__main__':
     build_tokenizer(TinyStoryConfig)
-    # build_tokenizer(OWTConfig)
+    build_tokenizer(OWTConfig)
