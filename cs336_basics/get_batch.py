@@ -1,0 +1,15 @@
+import torch
+import numpy as np
+import numpy.typing as npt
+
+
+def get_batch(dataset: npt.NDArray, batch_size: int, context_length: int, device: str):
+    dataset_length = dataset.size
+
+    input_start = np.random.randint(0, dataset_length - context_length, size=batch_size)
+    input_index = input_start[:, None] + np.arange(context_length)
+    output_index = input_index + 1
+
+    input_tensor = torch.tensor(dataset[input_index], device=device)
+    output_tensor = torch.tensor(dataset[output_index], device=device)
+    return input_tensor, output_tensor

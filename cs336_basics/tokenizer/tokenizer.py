@@ -5,7 +5,7 @@ from tqdm import tqdm
 import multiprocessing as mp
 from collections.abc import Iterable, Iterator
 
-from cs336_basics.config import TinyStoryConfig
+from cs336_basics.config import OWTConfig, TinyStoryConfig
 from cs336_basics.tokenizer.utils import pre_tokenize_from_text, find_nested_chunk_boundaries
 
 
@@ -201,7 +201,7 @@ class Tokenizer:
                         output_file.write(result)
 
 
-def tokenize_dataset():
+def tokenize_tinystory():
     tokenizer = Tokenizer.from_files(
         TinyStoryConfig.cache_dir / "vocab.pkl",
         TinyStoryConfig.cache_dir / "merges.pkl",
@@ -228,5 +228,33 @@ def tokenize_dataset():
     )
 
 
+def tokenize_owt():
+    tokenizer = Tokenizer.from_files(
+        OWTConfig.cache_dir / "vocab.pkl",
+        OWTConfig.cache_dir / "merges.pkl",
+        OWTConfig.special_tokens)
+    tokenizer.encode_from_file(
+        OWTConfig.train_file,
+        OWTConfig.cache_dir / "train_encoded.bin",
+        50,
+        16
+    )
+    tokenizer.decode_from_file(
+        OWTConfig.cache_dir / "train_encoded.bin",
+        OWTConfig.cache_dir / "train_decoded.txt",
+        50,
+        16
+    )
+    tokenizer.encode_from_file(
+        OWTConfig.valid_file,
+        OWTConfig.cache_dir / "valid_encoded.bin"
+    )
+    tokenizer.decode_from_file(
+        OWTConfig.cache_dir / "valid_encoded.bin",
+        OWTConfig.cache_dir / "valid_decoded.txt"
+    )
+
+
 if __name__ == '__main__':
-    tokenize_dataset()
+    tokenize_tinystory()
+    tokenize_owt()

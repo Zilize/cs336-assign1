@@ -11,6 +11,7 @@ from torch import Tensor
 
 from cs336_basics.attention import scaled_dot_product_attention
 from cs336_basics.embedding import Embedding
+from cs336_basics.lr_schedule import learning_rate_schedule
 from cs336_basics.rmsnorm import RMSNorm
 from cs336_basics.rope import RotaryPositionalEmbedding
 from cs336_basics.softmax import softmax
@@ -19,6 +20,10 @@ from cs336_basics.tokenizer import Tokenizer, TokenizerBuilder
 from cs336_basics.linear import Linear
 from cs336_basics.attention import MHA
 from cs336_basics.transformer import TransformerBlock, TransformerLM
+from cs336_basics.cross_entropy import cross_entropy
+from cs336_basics.adamw import AdamW
+from cs336_basics.gradient_clipping import gradient_clipping
+from cs336_basics.get_batch import get_batch
 
 
 def run_linear(
@@ -213,10 +218,10 @@ def run_multihead_self_attention_with_rope(
     """
     mha = MHA(d_model, num_heads, use_rope=True, rope_theta=theta, rope_max_seq_len=max_seq_len)
     mha.load_state_dict({
-        'q_linear.weight': q_proj_weight,
-        'k_linear.weight': k_proj_weight,
-        'v_linear.weight': v_proj_weight,
-        'o_linear.weight': o_proj_weight,
+        'q_proj.weight': q_proj_weight,
+        'k_proj.weight': k_proj_weight,
+        'v_proj.weight': v_proj_weight,
+        'output_proj.weight': o_proj_weight,
     })
     return mha(in_features, token_positions)
 
@@ -465,7 +470,7 @@ def run_get_batch(
         is the sampled input sequences, and the second tuple item is the corresponding
         language modeling labels.
     """
-    raise NotImplementedError
+    return get_batch(dataset, batch_size, context_length, device)
 
 
 def run_softmax(in_features: Float[Tensor, " ..."], dim: int) -> Float[Tensor, " ..."]:
@@ -499,7 +504,7 @@ def run_cross_entropy(
     Returns:
         Float[Tensor, ""]: The average cross-entropy loss across examples.
     """
-    raise NotImplementedError
+    return cross_entropy(inputs, targets)
 
 
 def run_gradient_clipping(parameters: Iterable[torch.nn.Parameter], max_l2_norm: float) -> None:
@@ -511,14 +516,14 @@ def run_gradient_clipping(parameters: Iterable[torch.nn.Parameter], max_l2_norm:
 
     The gradients of the parameters (parameter.grad) should be modified in-place.
     """
-    raise NotImplementedError
+    return gradient_clipping(parameters, max_l2_norm)
 
 
 def get_adamw_cls() -> Any:
     """
     Returns a torch.optim.Optimizer that implements AdamW.
     """
-    raise NotImplementedError
+    return AdamW
 
 
 def run_get_lr_cosine_schedule(
@@ -546,7 +551,7 @@ def run_get_lr_cosine_schedule(
     Returns:
         Learning rate at the given iteration under the specified schedule.
     """
-    raise NotImplementedError
+    return learning_rate_schedule(it, max_learning_rate, min_learning_rate, warmup_iters, cosine_cycle_iters)
 
 
 def run_save_checkpoint(

@@ -1,0 +1,27 @@
+# syntax=docker/dockerfile:1.7
+# 用于在 k8s GPU 节点上做训练的镜像（日志走自建 wandb，镜像不负责）。
+# torch 的 PyPI wheel 自带 CUDA/cuDNN，宿主机只需装好 NVIDIA 驱动 + nvidia-container-toolkit。
+
+FROM python:3.12-slim-bookworm
+
+ENV PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+WORKDIR /app
+
+# 先只拷贝依赖清单，利用层缓存：依赖不变就不重装
+COPY requirements-train.txt ./
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install -r requirements-train.txt
+
+# 再拷贝源码
+COPY cs336_basics ./cs336_basics
+COPY pyproject.toml README.md ./
+
+# 让 python 能 import 到 cs336_basics
+ENV PYTHONPATH=/app
+
+# 默认入口占位，训练时在 k8s 里用 command/args 覆盖，例如：
+#   command: ["python", "-m", "cs336_basics.train", "--config", "..."]
+CMD ["python", "-c", "import torch; print('cuda available:', torch.cuda.is_available())"]

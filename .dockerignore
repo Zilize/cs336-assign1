@@ -1,0 +1,16 @@
+.venv
+.git
+.idea
+tests
+*.pdf
+uv.lock
+make_submission.sh
+data
+cache
+wandb
+*.pt
+*.bin
+*.pkl
+__pycache__
+**/__pycache__
+*.pyc
