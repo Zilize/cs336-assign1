@@ -8,6 +8,7 @@ def cross_entropy(logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
     logits_exp = logits_shifted.exp()
     logits_exp_sum = logits_exp.sum(dim=-1, keepdim=True)
     logits_exp_sum_log = logits_exp_sum.log()
+    logits_exp_sum_log = logits_exp_sum_log.reshape(-1)
 
     logits_shifted = logits_shifted.reshape(-1, logits_shifted.shape[-1])
     batch = torch.arange(logits_shifted.shape[0])
