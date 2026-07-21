@@ -10,6 +10,6 @@ def get_batch(dataset: npt.NDArray, batch_size: int, context_length: int, device
     input_index = input_start[:, None] + np.arange(context_length)
     output_index = input_index + 1
 
-    input_tensor = torch.tensor(dataset[input_index], device=device)
-    output_tensor = torch.tensor(dataset[output_index], device=device)
+    input_tensor = torch.tensor(dataset[input_index], dtype=torch.long, device=device)
+    output_tensor = torch.tensor(dataset[output_index], dtype=torch.long, device=device)
     return input_tensor, output_tensor

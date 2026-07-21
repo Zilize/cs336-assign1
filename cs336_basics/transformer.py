@@ -52,7 +52,7 @@ class TransformerLM(torch.nn.Module):
         self.ln_final = RMSNorm(d_model)
         self.lm_head = Embedding(self.vocab_size, d_model)
 
-    def forward(self, in_indices: torch.Tensor) -> torch.Tensor:
+    def forward(self, in_indices: torch.LongTensor) -> torch.Tensor:
         x = self.token_embeddings(in_indices)
         for layer in self.layers:
             x = layer(x)

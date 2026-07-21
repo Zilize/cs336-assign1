@@ -10,6 +10,7 @@ def save_checkpoint(
     iteration: int,
     out: str | os.PathLike | BinaryIO | IO[bytes],
 ):
+    os.makedirs(os.path.dirname(out), exist_ok=True)
     torch.save({
         "model": model.state_dict(),
         "optimizer": optimizer.state_dict(),

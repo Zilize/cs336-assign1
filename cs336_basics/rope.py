@@ -3,16 +3,16 @@ from einops import rearrange
 
 
 class RotaryPositionalEmbedding(torch.nn.Module):
-    def __init__(self, theta: float, d_k: int, max_seq_len: int, device=None):
+    def __init__(self, theta: float, d_k: int, max_seq_len: int):
         super().__init__()
         self.theta = theta
         self.d_k = d_k
         self.max_seq_len = max_seq_len
-        self.device = device
 
         cos_matrix, sin_matrix = self.build_rotary_matrix()
         self.register_buffer('cos_matrix', cos_matrix, persistent=False)
         self.register_buffer('sin_matrix', sin_matrix, persistent=False)
+        self.register_buffer('sign', torch.tensor([-1, 1]).repeat(self.d_k // 2), persistent=False)
 
     def build_rotary_matrix(self):
         k = torch.arange(1, self.d_k // 2 + 1)
@@ -34,6 +34,4 @@ class RotaryPositionalEmbedding(torch.nn.Module):
         even = torch.arange(0, self.d_k, 2)
         indices = torch.stack([odd, even], dim=1).flatten()
 
-        sign = torch.tensor([-1, 1]).repeat(self.d_k // 2)
-
-        return x * cos_matrix + x[..., indices] * sign * sin_matrix
+        return x * cos_matrix + x[..., indices] * self.sign * sin_matrix

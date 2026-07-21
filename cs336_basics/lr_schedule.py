@@ -1,5 +1,4 @@
 import math
-import torch
 
 
 def learning_rate_schedule(
