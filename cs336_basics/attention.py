@@ -25,13 +25,14 @@ def scaled_dot_product_attention(
 
 
 class MHA(torch.nn.Module):
-    def __init__(self, d_model, num_heads, use_rope=False, rope_theta=None, rope_max_seq_len=None):
+    def __init__(self, d_model, num_heads, use_rope=False, rope_theta=None, rope_max_seq_len=None, use_flash_attn=False):
         super().__init__()
         self.d_model = d_model
         self.num_heads = num_heads
         self.d_head = d_model // num_heads
         assert self.d_head * self.num_heads == self.d_model
         self.use_rope = use_rope
+        self.use_flash_attn = use_flash_attn
 
         self.q_proj = Linear(self.d_model, self.d_model)
         self.k_proj = Linear(self.d_model, self.d_model)
@@ -56,7 +57,10 @@ class MHA(torch.nn.Module):
             k = self.rope(k, token_positions)
 
         mask = torch.tril(torch.ones(q.shape[-2], k.shape[-2], dtype=torch.bool)).to(q.device)
-        output = scaled_dot_product_attention(q, k, v, mask)
+        if self.use_flash_attn:
+            output = torch.nn.functional.scaled_dot_product_attention(q, k, v, mask)
+        else:
+            output = scaled_dot_product_attention(q, k, v, mask)
         output = rearrange(output, '... h seq_len d_v -> ... seq_len (h d_v)')
 
         return self.output_proj(output)

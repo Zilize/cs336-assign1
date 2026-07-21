@@ -36,7 +36,8 @@ def train(args):
         args.d_ff,
         args.use_rope,
         args.rope_theta,
-        args.context_len
+        args.context_len,
+        args.use_flash_attn
     ).to(device)
 
     optimizer = AdamW(
@@ -79,10 +80,10 @@ if __name__ == '__main__':
     parser.add_argument('--valid_data', type=str, default='./cache/tinystory/valid_encoded.bin')
 
     parser.add_argument('--vocab_size', type=int, default=10000)
-    parser.add_argument('--batch_size', type=int, default=64)
+    parser.add_argument('--batch_size', type=int, default=128)
     parser.add_argument('--context_len', type=int, default=256)
 
-    parser.add_argument('--max_iterations', type=int, default=160000)
+    parser.add_argument('--max_iterations', type=int, default=100000)
     parser.add_argument('--save_intervals', type=int, default=100)
 
     parser.add_argument('--num_layers', type=int, default=4)
@@ -92,6 +93,7 @@ if __name__ == '__main__':
 
     parser.add_argument('--use_rope', type=bool, default=True)
     parser.add_argument('--rope_theta', type=int, default=10000)
+    parser.add_argument('--use_flash_attn', type=bool, default=True)
 
     parser.add_argument('--max_learning_rate', type=float, default=1e-2)
     parser.add_argument('--min_learning_rate', type=float, default=1e-3)

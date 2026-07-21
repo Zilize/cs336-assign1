@@ -9,7 +9,7 @@ from cs336_basics.swiglu import SwiGLU
 
 
 class TransformerBlock(torch.nn.Module):
-    def __init__(self, d_model, num_heads, d_ff, use_rope=True, rope_theta=None, rope_max_seq_len=None):
+    def __init__(self, d_model, num_heads, d_ff, use_rope=True, rope_theta=None, rope_max_seq_len=None, use_flash_attn=False):
         super().__init__()
         self.d_model = d_model
         self.num_heads = num_heads
@@ -20,7 +20,9 @@ class TransformerBlock(torch.nn.Module):
             self.num_heads,
             use_rope=use_rope,
             rope_theta=rope_theta,
-            rope_max_seq_len=rope_max_seq_len)
+            rope_max_seq_len=rope_max_seq_len,
+            use_flash_attn=use_flash_attn
+        )
         self.ffn = SwiGLU(self.d_model, self.d_ff)
 
         self.ln1 = RMSNorm(self.d_model)
@@ -35,7 +37,7 @@ class TransformerBlock(torch.nn.Module):
 
 class TransformerLM(torch.nn.Module):
     def __init__(self, vocab_size, num_layers, d_model, num_heads, d_ff, use_rope=True,
-                 rope_theta=None, rope_max_seq_len=None):
+                 rope_theta=None, rope_max_seq_len=None, use_flash_attn=False):
         super().__init__()
         self.vocab_size = vocab_size
         self.num_layers = num_layers
@@ -48,6 +50,7 @@ class TransformerLM(torch.nn.Module):
             use_rope=use_rope,
             rope_theta=rope_theta,
             rope_max_seq_len=rope_max_seq_len,
+            use_flash_attn=use_flash_attn
         ) for _ in range(self.num_layers)])
         self.ln_final = RMSNorm(d_model)
         self.lm_head = Embedding(self.vocab_size, d_model)
