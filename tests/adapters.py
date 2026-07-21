@@ -24,6 +24,8 @@ from cs336_basics.cross_entropy import cross_entropy
 from cs336_basics.adamw import AdamW
 from cs336_basics.gradient_clipping import gradient_clipping
 from cs336_basics.get_batch import get_batch
+from cs336_basics.checkpoint import save_checkpoint, load_checkpoint
+from cs336_basics.silu import silu
 
 
 def run_linear(
@@ -447,7 +449,7 @@ def run_silu(in_features: Float[Tensor, " ..."]) -> Float[Tensor, " ..."]:
         Float[Tensor,"..."]: of with the same shape as `in_features` with the output of applying
         SiLU to each element.
     """
-    raise NotImplementedError
+    return silu(in_features)
 
 
 def run_get_batch(
@@ -570,7 +572,7 @@ def run_save_checkpoint(
             we've completed.
         out (str | os.PathLike | BinaryIO | IO[bytes]): Path or file-like object to serialize the model, optimizer, and iteration to.
     """
-    raise NotImplementedError
+    return save_checkpoint(model, optimizer, iteration, out)
 
 
 def run_load_checkpoint(
@@ -591,7 +593,7 @@ def run_load_checkpoint(
     Returns:
         int: the previously-serialized number of iterations.
     """
-    raise NotImplementedError
+    return load_checkpoint(src, model, optimizer)
 
 
 def get_tokenizer(
