@@ -72,18 +72,19 @@ def train(args):
         loss.backward()
 
         gradient_clipping(lm.parameters(), max_l2_norm=args.max_l2_norm, device=device)
-        for group in optimizer.param_groups:
-            group["lr"] = learning_rate_schedule(
+        learning_rate = learning_rate_schedule(
                 iteration,
                 args.max_learning_rate,
                 args.min_learning_rate,
                 args.warmup_iters,
                 args.cosine_cycle_iters
             )
+        for group in optimizer.param_groups:
+            group["lr"] = learning_rate
         optimizer.step()
 
         lm.zero_grad()
-        run.log({"train/loss": loss.item()}, step=iteration)
+        run.log({"train/loss": loss.item(), "train/learning_rate": learning_rate}, step=iteration)
 
         if iteration % args.eval_intervals == 0:
             with torch.no_grad():
