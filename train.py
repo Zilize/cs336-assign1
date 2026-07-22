@@ -1,85 +1,16 @@
 import math
-import os
 import torch
 import wandb
 import argparse
-import numpy as np
-from tqdm import tqdm
 
 from cs336_basics.adamw import AdamW
 from cs336_basics.checkpoint import save_checkpoint
 from cs336_basics.cross_entropy import cross_entropy
-from cs336_basics.get_batch import get_batch
 from cs336_basics.gradient_clipping import gradient_clipping
 from cs336_basics.lr_schedule import learning_rate_schedule
 from cs336_basics.transformer import TransformerLM
-
-
-if torch.cuda.is_available():
-    device = 'cuda'
-else:
-    device = 'cpu'
-
-
-def dataloader(data_path, batch_size, context_len, is_valid=False, num_steps=None):
-    total_tokens = os.path.getsize(data_path) // 2
-    dataset = np.memmap(data_path, dtype=np.uint16, mode='r', shape=(total_tokens,))
-
-    if not is_valid:
-        assert num_steps is not None
-        for _ in tqdm(range(num_steps)):
-            yield get_batch(dataset, batch_size, context_len, device)
-    else:
-        num_seqs = (total_tokens - 1) // context_len
-        num_steps = num_seqs // batch_size
-        for i in range(num_steps):
-            input_start = np.arange(i * batch_size, (i + 1) * batch_size) * context_len
-            yield get_batch(dataset, batch_size, context_len, device, input_start=input_start)
-
-        input_start = np.arange(num_steps * batch_size, num_seqs) * context_len
-        if num_seqs - num_steps * batch_size > 0:
-            yield get_batch(dataset, num_seqs - num_steps * batch_size, context_len, device, input_start)
-
-
-def capture_gradient_norms(named_parameters, num_layers):
-    layers_first_attn_sum_of_squares = torch.zeros((1,), device=device)
-    layers_first_ffn_sum_of_squares = torch.zeros((1,), device=device)
-    layers_last_attn_sum_of_squares = torch.zeros((1,), device=device)
-    layers_last_ffn_sum_of_squares = torch.zeros((1,), device=device)
-    for name, parameter in named_parameters:
-        if parameter.grad is None:
-            continue
-        if name.startswith(f"layers.0.attn"):
-            layers_first_attn_sum_of_squares += (parameter.grad.data ** 2).sum()
-        elif name.startswith(f"layers.0.ffn"):
-            layers_first_ffn_sum_of_squares += (parameter.grad.data ** 2).sum()
-        elif name.startswith(f"layers.{num_layers - 1}.attn"):
-            layers_last_attn_sum_of_squares += (parameter.grad.data ** 2).sum()
-        elif name.startswith(f"layers.{num_layers - 1}.ffn"):
-            layers_last_ffn_sum_of_squares += (parameter.grad.data ** 2).sum()
-    return {
-        "layers_first_attn_norm": torch.sqrt(layers_first_attn_sum_of_squares).item(),
-        "layers_first_ffn_norm": torch.sqrt(layers_first_ffn_sum_of_squares).item(),
-        "layers_last_attn_norm": torch.sqrt(layers_last_attn_sum_of_squares).item(),
-        "layers_last_ffn_norm": torch.sqrt(layers_last_ffn_sum_of_squares).item()
-    }
-
-
-def capture_weight_norm(parameters):
-    sum_of_squares = torch.zeros((1,), device=device)
-    for parameter in parameters:
-        sum_of_squares += (parameter.data ** 2).sum()
-    return torch.sqrt(sum_of_squares).item()
-
-
-activation_norms = dict()
-
-def capture_activation_norm_hook(layer_name):
-    def hook(module, inputs, output):
-        with torch.no_grad():
-            norm = output.detach().norm().item()
-            activation_norms[layer_name] = norm
-    return hook
+from utils import device, dataloader
+from utils import capture_weight_norm, capture_gradient_norms, capture_activation_norm_hook, activation_norms
 
 
 def train(args):
@@ -112,12 +43,14 @@ def train(args):
 
     iteration = 0
     for inputs, targets in dataloader(args.train_data, args.batch_size, args.context_len, num_steps=args.max_iterations):
-        outputs = lm(inputs)
-        loss = cross_entropy(outputs, targets)
-        loss.backward()
+        with torch.autocast(device_type=device, dtype=torch.bfloat16):
+            outputs = lm(inputs)
+            loss = cross_entropy(outputs, targets)
 
+        loss.backward()
         gradient_norms = capture_gradient_norms(lm.named_parameters(), args.num_layers)
         gradient_global_norm = gradient_clipping(lm.parameters(), max_l2_norm=args.max_l2_norm, device=device)
+
         learning_rate = learning_rate_schedule(
                 iteration,
                 args.max_learning_rate,
@@ -128,8 +61,8 @@ def train(args):
         for group in optimizer.param_groups:
             group["lr"] = learning_rate
         optimizer.step()
-
         lm.zero_grad()
+
         run.log({
             "train/loss": loss.item(),
             "train/learning_rate": learning_rate,
@@ -148,8 +81,9 @@ def train(args):
                 total_valid_loss = 0
                 total_valid_step = 0
                 for valid_inputs, valid_targets in dataloader(args.valid_data, args.batch_size, args.context_len, True):
-                    valid_outputs = lm(valid_inputs)
-                    valid_loss = cross_entropy(valid_outputs, valid_targets)
+                    with torch.autocast(device_type=device, dtype=torch.bfloat16):
+                        valid_outputs = lm(valid_inputs)
+                        valid_loss = cross_entropy(valid_outputs, valid_targets)
 
                     valid_batch_size = valid_inputs.shape[0]
                     total_valid_loss += valid_loss.item() * valid_batch_size
