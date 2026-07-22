@@ -9,8 +9,14 @@ from cs336_basics.cross_entropy import cross_entropy
 from cs336_basics.gradient_clipping import gradient_clipping
 from cs336_basics.lr_schedule import learning_rate_schedule
 from cs336_basics.transformer import TransformerLM
-from utils import device, dataloader
+from utils import dataloader
 from utils import capture_weight_norm, capture_gradient_norms, capture_activation_norm_hook, activation_norms
+
+
+if torch.cuda.is_available():
+    device = 'cuda'
+else:
+    device = 'cpu'
 
 
 def train(args):
@@ -42,13 +48,19 @@ def train(args):
     )
 
     iteration = 0
-    for inputs, targets in dataloader(args.train_data, args.batch_size, args.context_len, num_steps=args.max_iterations):
+    for inputs, targets in dataloader(
+            args.train_data,
+            args.batch_size,
+            args.context_len,
+            num_steps=args.max_iterations,
+            device=device
+    ):
         with torch.autocast(device_type=device, dtype=torch.bfloat16):
             outputs = lm(inputs)
             loss = cross_entropy(outputs, targets)
 
         loss.backward()
-        gradient_norms = capture_gradient_norms(lm.named_parameters(), args.num_layers)
+        gradient_norms = capture_gradient_norms(lm, args.num_layers, device=device)
         gradient_global_norm = gradient_clipping(lm.parameters(), max_l2_norm=args.max_l2_norm, device=device)
 
         learning_rate = learning_rate_schedule(
@@ -80,7 +92,13 @@ def train(args):
                 lm.eval()
                 total_valid_loss = 0
                 total_valid_step = 0
-                for valid_inputs, valid_targets in dataloader(args.valid_data, args.batch_size, args.context_len, True):
+                for valid_inputs, valid_targets in dataloader(
+                        args.valid_data,
+                        args.batch_size,
+                        args.context_len,
+                        is_valid=True,
+                        device=device
+                ):
                     with torch.autocast(device_type=device, dtype=torch.bfloat16):
                         valid_outputs = lm(valid_inputs)
                         valid_loss = cross_entropy(valid_outputs, valid_targets)
@@ -90,7 +108,7 @@ def train(args):
                     total_valid_step += valid_batch_size
 
                 mean_valid_loss = total_valid_loss / total_valid_step
-                weight_norm = capture_weight_norm(lm.parameters())
+                weight_norm = capture_weight_norm(lm.parameters(), device=device)
                 run.log({
                     "valid/loss": mean_valid_loss,
                     "valid/perplexity": math.exp(mean_valid_loss),

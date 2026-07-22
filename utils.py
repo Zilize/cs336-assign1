@@ -6,13 +6,7 @@ from tqdm import tqdm
 from cs336_basics.get_batch import get_batch
 
 
-if torch.cuda.is_available():
-    device = 'cuda'
-else:
-    device = 'cpu'
-
-
-def dataloader(data_path, batch_size, context_len, is_valid=False, num_steps=None):
+def dataloader(data_path, batch_size, context_len, is_valid=False, num_steps=None, device=None):
     total_tokens = os.path.getsize(data_path) // 2
     dataset = np.memmap(data_path, dtype=np.uint16, mode='r', shape=(total_tokens,))
 
@@ -32,22 +26,34 @@ def dataloader(data_path, batch_size, context_len, is_valid=False, num_steps=Non
             yield get_batch(dataset, num_seqs - num_steps * batch_size, context_len, device, input_start)
 
 
-def capture_gradient_norms(named_parameters, num_layers):
+def capture_gradient_norms(model, num_layers, device=None, distributed=False):
     layers_first_attn_sum_of_squares = torch.zeros((1,), device=device)
     layers_first_ffn_sum_of_squares = torch.zeros((1,), device=device)
     layers_last_attn_sum_of_squares = torch.zeros((1,), device=device)
     layers_last_ffn_sum_of_squares = torch.zeros((1,), device=device)
-    for name, parameter in named_parameters:
+
+    for parameter in model.layers[0].attn.parameters():
         if parameter.grad is None:
             continue
-        if name.startswith(f"layers.0.attn"):
-            layers_first_attn_sum_of_squares += (parameter.grad.data ** 2).sum()
-        elif name.startswith(f"layers.0.ffn"):
-            layers_first_ffn_sum_of_squares += (parameter.grad.data ** 2).sum()
-        elif name.startswith(f"layers.{num_layers - 1}.attn"):
-            layers_last_attn_sum_of_squares += (parameter.grad.data ** 2).sum()
-        elif name.startswith(f"layers.{num_layers - 1}.ffn"):
-            layers_last_ffn_sum_of_squares += (parameter.grad.data ** 2).sum()
+        layers_first_attn_sum_of_squares += (parameter.grad.data ** 2).sum()
+    for parameter in model.layers[0].ffn.parameters():
+        if parameter.grad is None:
+            continue
+        layers_first_ffn_sum_of_squares += (parameter.grad.data ** 2).sum()
+    for parameter in model.layers[num_layers - 1].attn.parameters():
+        if parameter.grad is None:
+            continue
+        layers_last_attn_sum_of_squares += (parameter.grad.data ** 2).sum()
+    for parameter in model.layers[num_layers - 1].ffn.parameters():
+        if parameter.grad is None:
+            continue
+        layers_last_ffn_sum_of_squares += (parameter.grad.data ** 2).sum()
+
+    if distributed:
+        torch.distributed.all_reduce(layers_first_attn_sum_of_squares, op=torch.distributed.ReduceOp.SUM)
+        torch.distributed.all_reduce(layers_first_ffn_sum_of_squares, op=torch.distributed.ReduceOp.SUM)
+        torch.distributed.all_reduce(layers_last_attn_sum_of_squares, op=torch.distributed.ReduceOp.SUM)
+        torch.distributed.all_reduce(layers_last_ffn_sum_of_squares, op=torch.distributed.ReduceOp.SUM)
     return {
         "layers_first_attn_norm": torch.sqrt(layers_first_attn_sum_of_squares).item(),
         "layers_first_ffn_norm": torch.sqrt(layers_first_ffn_sum_of_squares).item(),
@@ -56,18 +62,26 @@ def capture_gradient_norms(named_parameters, num_layers):
     }
 
 
-def capture_weight_norm(parameters):
+def capture_weight_norm(parameters, device=None, distributed=False):
     sum_of_squares = torch.zeros((1,), device=device)
     for parameter in parameters:
         sum_of_squares += (parameter.data ** 2).sum()
+
+    if distributed:
+        torch.distributed.all_reduce(sum_of_squares, op=torch.distributed.ReduceOp.SUM)
     return torch.sqrt(sum_of_squares).item()
 
 
 activation_norms = dict()
 
-def capture_activation_norm_hook(layer_name):
+def capture_activation_norm_hook(layer_name, distributed=False):
     def hook(module, inputs, output):
         with torch.no_grad():
-            norm = output.detach().norm().item()
+            if distributed:
+                sum_of_squares = output.detach().pow(2).sum()
+                torch.distributed.all_reduce(sum_of_squares, op=torch.distributed.ReduceOp.SUM)
+                norm = torch.sqrt(sum_of_squares).item()
+            else:
+                norm = output.detach().norm().item()
             activation_norms[layer_name] = norm
     return hook
