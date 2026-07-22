@@ -17,3 +17,4 @@ def gradient_clipping(parameters, max_l2_norm: float, eps=1e-6, device=None):
             if param.grad is None:
                 continue
             param.grad.data.mul_(scale)
+    return l2_norm.item()

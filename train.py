@@ -1,3 +1,4 @@
+import math
 import os
 import torch
 import wandb
@@ -40,6 +41,47 @@ def dataloader(data_path, batch_size, context_len, is_valid=False, num_steps=Non
             yield get_batch(dataset, num_seqs - num_steps * batch_size, context_len, device, input_start)
 
 
+def capture_gradient_norms(named_parameters, num_layers):
+    layers_first_attn_sum_of_squares = torch.zeros((1,), device=device)
+    layers_first_ffn_sum_of_squares = torch.zeros((1,), device=device)
+    layers_last_attn_sum_of_squares = torch.zeros((1,), device=device)
+    layers_last_ffn_sum_of_squares = torch.zeros((1,), device=device)
+    for name, parameter in named_parameters:
+        if parameter.grad is None:
+            continue
+        if name.startswith(f"layers.0.attn"):
+            layers_first_attn_sum_of_squares += (parameter.grad.data ** 2).sum()
+        elif name.startswith(f"layers.0.ffn"):
+            layers_first_ffn_sum_of_squares += (parameter.grad.data ** 2).sum()
+        elif name.startswith(f"layers.{num_layers - 1}.attn"):
+            layers_last_attn_sum_of_squares += (parameter.grad.data ** 2).sum()
+        elif name.startswith(f"layers.{num_layers - 1}.ffn"):
+            layers_last_ffn_sum_of_squares += (parameter.grad.data ** 2).sum()
+    return {
+        "layers_first_attn_norm": torch.sqrt(layers_first_attn_sum_of_squares).item(),
+        "layers_first_ffn_norm": torch.sqrt(layers_first_ffn_sum_of_squares).item(),
+        "layers_last_attn_norm": torch.sqrt(layers_last_attn_sum_of_squares).item(),
+        "layers_last_ffn_norm": torch.sqrt(layers_last_ffn_sum_of_squares).item()
+    }
+
+
+def capture_weight_norm(parameters):
+    sum_of_squares = torch.zeros((1,), device=device)
+    for parameter in parameters:
+        sum_of_squares += (parameter.data ** 2).sum()
+    return torch.sqrt(sum_of_squares).item()
+
+
+activation_norms = dict()
+
+def capture_activation_norm_hook(layer_name):
+    def hook(module, inputs, output):
+        with torch.no_grad():
+            norm = output.detach().norm().item()
+            activation_norms[layer_name] = norm
+    return hook
+
+
 def train(args):
     run = wandb.init(
         entity='zilize',
@@ -58,6 +100,9 @@ def train(args):
         args.use_flash_attn
     ).to(device)
 
+    lm.layers[0].register_forward_hook(capture_activation_norm_hook('layers.0'))
+    lm.layers[args.num_layers - 1].register_forward_hook(capture_activation_norm_hook(f'layers.{args.num_layers - 1}'))
+
     optimizer = AdamW(
         lm.parameters(),
         lr=0.0,
@@ -71,7 +116,8 @@ def train(args):
         loss = cross_entropy(outputs, targets)
         loss.backward()
 
-        gradient_clipping(lm.parameters(), max_l2_norm=args.max_l2_norm, device=device)
+        gradient_norms = capture_gradient_norms(lm.named_parameters(), args.num_layers)
+        gradient_global_norm = gradient_clipping(lm.parameters(), max_l2_norm=args.max_l2_norm, device=device)
         learning_rate = learning_rate_schedule(
                 iteration,
                 args.max_learning_rate,
@@ -84,7 +130,17 @@ def train(args):
         optimizer.step()
 
         lm.zero_grad()
-        run.log({"train/loss": loss.item(), "train/learning_rate": learning_rate}, step=iteration)
+        run.log({
+            "train/loss": loss.item(),
+            "train/learning_rate": learning_rate,
+            "gradient_norm/global": gradient_global_norm,
+            "gradient_norm/layers.0.attn": gradient_norms["layers_first_attn_norm"],
+            "gradient_norm/layers.0.ffn": gradient_norms["layers_first_ffn_norm"],
+            f"gradient_norm/layers.{args.num_layers - 1}.attn": gradient_norms["layers_last_attn_norm"],
+            f"gradient_norm/layers.{args.num_layers - 1}.ffn": gradient_norms["layers_last_ffn_norm"],
+            "activation_norm/layers.0": activation_norms["layers.0"],
+            f"activation_norm/layers.{args.num_layers - 1}": activation_norms[f"layers.{args.num_layers - 1}"],
+        }, step=iteration)
 
         if iteration % args.eval_intervals == 0:
             with torch.no_grad():
@@ -98,7 +154,14 @@ def train(args):
                     valid_batch_size = valid_inputs.shape[0]
                     total_valid_loss += valid_loss.item() * valid_batch_size
                     total_valid_step += valid_batch_size
-                run.log({"valid/loss": total_valid_loss / total_valid_step}, step=iteration)
+
+                mean_valid_loss = total_valid_loss / total_valid_step
+                weight_norm = capture_weight_norm(lm.parameters())
+                run.log({
+                    "valid/loss": mean_valid_loss,
+                    "valid/perplexity": math.exp(mean_valid_loss),
+                    "valid/weight_norm": weight_norm,
+                }, step=iteration)
                 lm.train()
 
         if iteration % args.save_intervals == 0:
