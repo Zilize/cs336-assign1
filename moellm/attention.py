@@ -2,9 +2,9 @@ import math
 import torch
 from einops import einsum, rearrange
 
-from cs336_basics.linear import Linear
-from cs336_basics.rope import RotaryPositionalEmbedding
-from cs336_basics.softmax import softmax
+from moellm.linear import Linear
+from moellm.rope import RotaryPositionalEmbedding
+from moellm.softmax import softmax
 
 
 def scaled_dot_product_attention(

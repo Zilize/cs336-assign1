@@ -5,7 +5,7 @@ from tqdm import tqdm
 
 from torch.distributed.tensor import DTensor
 
-from cs336_basics.get_batch import get_batch
+from moellm.get_batch import get_batch
 
 
 def dataloader(data_path, batch_size, context_len, is_valid=False, num_steps=None, device=None):
@@ -35,6 +35,7 @@ def capture_gradient_norms(model, num_layers, device=None, distributed=False):
             if parameter.grad is None:
                 continue
             sum_of_squares += (parameter.grad.data ** 2).sum()
+        return sum_of_squares.sqrt().item()
 
     def capture_impl_dist_(parameters):
         norms = list()
@@ -45,7 +46,7 @@ def capture_gradient_norms(model, num_layers, device=None, distributed=False):
             norm = norm.full_tensor()
             norms.append(norm)
         stacked = torch.stack([x.flatten() for x in norms])
-        return torch.linalg.vector_norm(stacked, 2.0)
+        return torch.linalg.vector_norm(stacked, 2.0).item()
 
     capture_impl_ = capture_impl_dist_ if distributed else capture_impl_local_
     return {

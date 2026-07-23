@@ -5,8 +5,8 @@ from tqdm import tqdm
 import multiprocessing as mp
 from collections.abc import Iterable, Iterator
 
-from cs336_basics.config import OWTConfig, TinyStoryConfig
-from cs336_basics.tokenizer.utils import pre_tokenize_from_text, find_nested_chunk_boundaries
+from moellm.config import OWTConfig, TinyStoryConfig
+from moellm.tokenizer.utils import pre_tokenize_from_text, find_nested_chunk_boundaries
 
 
 mp.set_start_method("spawn", force=True)

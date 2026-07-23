@@ -12,10 +12,10 @@ from torch.distributed.fsdp import fully_shard
 from torch.distributed.checkpoint.state_dict import get_state_dict, set_state_dict
 from torch.distributed.checkpoint.stateful import Stateful
 
-from cs336_basics.adamw import AdamW
-from cs336_basics.cross_entropy import cross_entropy
-from cs336_basics.lr_schedule import learning_rate_schedule
-from cs336_basics.transformer import TransformerLM
+from moellm.adamw import AdamW
+from moellm.cross_entropy import cross_entropy
+from moellm.lr_schedule import learning_rate_schedule
+from moellm.transformer import TransformerLM
 from utils import dataloader
 from utils import capture_weight_norm, capture_gradient_norms, capture_activation_rms_hook, activation_rms
 
@@ -81,7 +81,7 @@ def train(args):
     if rank == 0:
         run = wandb.init(
             entity='zilize',
-            project='llm',
+            project='moellm',
             config=dict(vars(args))
         )
 
@@ -152,8 +152,8 @@ def train(args):
                 "gradient_norm/layers.0.ffn": gradient_norms["layers_first_ffn_norm"],
                 f"gradient_norm/layers.{args.num_layers - 1}.attn": gradient_norms["layers_last_attn_norm"],
                 f"gradient_norm/layers.{args.num_layers - 1}.ffn": gradient_norms["layers_last_ffn_norm"],
-                "activation_norm/layers.0": activation_rms["layers.0"],
-                f"activation_norm/layers.{args.num_layers - 1}": activation_rms[f"layers.{args.num_layers - 1}"],
+                "activation_rms/layers.0": activation_rms["layers.0"],
+                f"activation_rms/layers.{args.num_layers - 1}": activation_rms[f"layers.{args.num_layers - 1}"],
             }, step=iteration)
 
         if iteration % args.eval_intervals == 0:

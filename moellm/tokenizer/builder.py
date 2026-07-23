@@ -4,8 +4,8 @@ from tqdm import tqdm
 import multiprocessing as mp
 from sortedcontainers import SortedSet
 
-from cs336_basics.config import DatasetConfig, TinyStoryConfig, OWTConfig
-from cs336_basics.tokenizer.utils import find_nested_chunk_boundaries, pre_tokenize_from_file
+from moellm.config import DatasetConfig, TinyStoryConfig, OWTConfig
+from moellm.tokenizer.utils import find_nested_chunk_boundaries, pre_tokenize_from_file
 
 
 mp.set_start_method("spawn", force=True)

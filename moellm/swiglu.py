@@ -1,6 +1,6 @@
 import torch
 
-from cs336_basics.linear import Linear
+from moellm.linear import Linear
 
 
 class SwiGLU(torch.nn.Module):

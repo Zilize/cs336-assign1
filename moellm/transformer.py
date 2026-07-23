@@ -1,10 +1,10 @@
 import torch
 
-from cs336_basics.attention import MHA
-from cs336_basics.embedding import Embedding
-from cs336_basics.linear import Linear
-from cs336_basics.rmsnorm import RMSNorm
-from cs336_basics.swiglu import SwiGLU
+from moellm.attention import MHA
+from moellm.embedding import Embedding
+from moellm.linear import Linear
+from moellm.rmsnorm import RMSNorm
+from moellm.swiglu import SwiGLU
 
 
 class TransformerBlock(torch.nn.Module):

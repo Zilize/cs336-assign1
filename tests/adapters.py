@@ -9,23 +9,23 @@ import torch
 from jaxtyping import Bool, Float, Int
 from torch import Tensor
 
-from cs336_basics.attention import scaled_dot_product_attention
-from cs336_basics.embedding import Embedding
-from cs336_basics.lr_schedule import learning_rate_schedule
-from cs336_basics.rmsnorm import RMSNorm
-from cs336_basics.rope import RotaryPositionalEmbedding
-from cs336_basics.softmax import softmax
-from cs336_basics.swiglu import SwiGLU
-from cs336_basics.tokenizer import Tokenizer, TokenizerBuilder
-from cs336_basics.linear import Linear
-from cs336_basics.attention import MHA
-from cs336_basics.transformer import TransformerBlock, TransformerLM
-from cs336_basics.cross_entropy import cross_entropy
-from cs336_basics.adamw import AdamW
-from cs336_basics.gradient_clipping import gradient_clipping
-from cs336_basics.get_batch import get_batch
-from cs336_basics.checkpoint import save_checkpoint, load_checkpoint
-from cs336_basics.silu import silu
+from moellm.attention import scaled_dot_product_attention
+from moellm.embedding import Embedding
+from moellm.lr_schedule import learning_rate_schedule
+from moellm.rmsnorm import RMSNorm
+from moellm.rope import RotaryPositionalEmbedding
+from moellm.softmax import softmax
+from moellm.swiglu import SwiGLU
+from moellm.tokenizer import Tokenizer, TokenizerBuilder
+from moellm.linear import Linear
+from moellm.attention import MHA
+from moellm.transformer import TransformerBlock, TransformerLM
+from moellm.cross_entropy import cross_entropy
+from moellm.adamw import AdamW
+from moellm.gradient_clipping import gradient_clipping
+from moellm.get_batch import get_batch
+from moellm.checkpoint import save_checkpoint, load_checkpoint
+from moellm.silu import silu
 
 
 def run_linear(

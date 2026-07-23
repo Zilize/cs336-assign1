@@ -3,12 +3,12 @@ import torch
 import wandb
 import argparse
 
-from cs336_basics.adamw import AdamW
-from cs336_basics.checkpoint import save_checkpoint
-from cs336_basics.cross_entropy import cross_entropy
-from cs336_basics.gradient_clipping import gradient_clipping
-from cs336_basics.lr_schedule import learning_rate_schedule
-from cs336_basics.transformer import TransformerLM
+from moellm.adamw import AdamW
+from moellm.checkpoint import save_checkpoint
+from moellm.cross_entropy import cross_entropy
+from moellm.gradient_clipping import gradient_clipping
+from moellm.lr_schedule import learning_rate_schedule
+from moellm.transformer import TransformerLM
 from utils import dataloader
 from utils import capture_weight_norm, capture_gradient_norms, capture_activation_rms_hook, activation_rms
 
@@ -22,7 +22,7 @@ else:
 def train(args):
     run = wandb.init(
         entity='zilize',
-        project='llm',
+        project='moellm',
         config=dict(vars(args))
     )
     lm = TransformerLM(
@@ -83,8 +83,8 @@ def train(args):
             "gradient_norm/layers.0.ffn": gradient_norms["layers_first_ffn_norm"],
             f"gradient_norm/layers.{args.num_layers - 1}.attn": gradient_norms["layers_last_attn_norm"],
             f"gradient_norm/layers.{args.num_layers - 1}.ffn": gradient_norms["layers_last_ffn_norm"],
-            "activation_norm/layers.0": activation_rms["layers.0"],
-            f"activation_norm/layers.{args.num_layers - 1}": activation_rms[f"layers.{args.num_layers - 1}"],
+            "activation_rms/layers.0": activation_rms["layers.0"],
+            f"activation_rms/layers.{args.num_layers - 1}": activation_rms[f"layers.{args.num_layers - 1}"],
         }, step=iteration)
 
         if iteration % args.eval_intervals == 0:
@@ -108,7 +108,7 @@ def train(args):
                     total_valid_step += valid_batch_size
 
                 mean_valid_loss = total_valid_loss / total_valid_step
-                weight_norm = capture_weight_norm(lm.parameters(), device=device)
+                weight_norm = capture_weight_norm(lm, device=device)
                 run.log({
                     "valid/loss": mean_valid_loss,
                     "valid/perplexity": math.exp(mean_valid_loss),
