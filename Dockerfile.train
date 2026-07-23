@@ -17,11 +17,9 @@ COPY requirements-train.txt ./
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install -r requirements-train.txt
 
-# 再拷贝源码：train.py / utils.py 在仓库根目录，cs336_basics 是包
-COPY cs336_basics ./cs336_basics
+COPY moellm ./moellm
 COPY train.py utils.py ./
 COPY train_distributed.py ./
-COPY pyproject.toml README.md ./
+COPY pyproject.toml ./
 
-# 让 python 能 import 到 cs336_basics 和根目录下的 utils
 ENV PYTHONPATH=/app
