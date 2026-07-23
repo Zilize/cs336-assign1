@@ -10,7 +10,7 @@ from cs336_basics.gradient_clipping import gradient_clipping
 from cs336_basics.lr_schedule import learning_rate_schedule
 from cs336_basics.transformer import TransformerLM
 from utils import dataloader
-from utils import capture_weight_norm, capture_gradient_norms, capture_activation_norm_hook, activation_norms
+from utils import capture_weight_norm, capture_gradient_norms, capture_activation_rms_hook, activation_rms
 
 
 if torch.cuda.is_available():
@@ -37,8 +37,8 @@ def train(args):
         args.use_flash_attn
     ).to(device)
 
-    lm.layers[0].register_forward_hook(capture_activation_norm_hook('layers.0'))
-    lm.layers[args.num_layers - 1].register_forward_hook(capture_activation_norm_hook(f'layers.{args.num_layers - 1}'))
+    lm.layers[0].register_forward_hook(capture_activation_rms_hook('layers.0'))
+    lm.layers[args.num_layers - 1].register_forward_hook(capture_activation_rms_hook(f'layers.{args.num_layers - 1}'))
 
     optimizer = AdamW(
         lm.parameters(),
@@ -83,8 +83,8 @@ def train(args):
             "gradient_norm/layers.0.ffn": gradient_norms["layers_first_ffn_norm"],
             f"gradient_norm/layers.{args.num_layers - 1}.attn": gradient_norms["layers_last_attn_norm"],
             f"gradient_norm/layers.{args.num_layers - 1}.ffn": gradient_norms["layers_last_ffn_norm"],
-            "activation_norm/layers.0": activation_norms["layers.0"],
-            f"activation_norm/layers.{args.num_layers - 1}": activation_norms[f"layers.{args.num_layers - 1}"],
+            "activation_norm/layers.0": activation_rms["layers.0"],
+            f"activation_norm/layers.{args.num_layers - 1}": activation_rms[f"layers.{args.num_layers - 1}"],
         }, step=iteration)
 
         if iteration % args.eval_intervals == 0:

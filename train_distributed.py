@@ -17,7 +17,7 @@ from cs336_basics.cross_entropy import cross_entropy
 from cs336_basics.lr_schedule import learning_rate_schedule
 from cs336_basics.transformer import TransformerLM
 from utils import dataloader
-from utils import capture_weight_norm, capture_gradient_norms, capture_activation_norm_hook, activation_norms
+from utils import capture_weight_norm, capture_gradient_norms, capture_activation_rms_hook, activation_rms
 
 
 assert torch.cuda.is_available()
@@ -104,8 +104,8 @@ def train(args):
         fully_shard(layer)
     fully_shard(lm)
 
-    lm.layers[0].register_forward_hook(capture_activation_norm_hook('layers.0', distributed=True))
-    lm.layers[args.num_layers - 1].register_forward_hook(capture_activation_norm_hook(f'layers.{args.num_layers - 1}', distributed=True))
+    lm.layers[0].register_forward_hook(capture_activation_rms_hook('layers.0', distributed=True))
+    lm.layers[args.num_layers - 1].register_forward_hook(capture_activation_rms_hook(f'layers.{args.num_layers - 1}', distributed=True))
 
     optimizer = AdamW(
         lm.parameters(),
@@ -129,7 +129,7 @@ def train(args):
         loss.backward()
 
         gradient_norms = capture_gradient_norms(lm, args.num_layers, device=device, distributed=True)
-        gradient_global_norm = torch.nn.utils.clip_grad_norm_(lm, max_norm=args.max_l2_norm).item()
+        gradient_global_norm = torch.nn.utils.clip_grad_norm_(lm.parameters(), max_norm=args.max_l2_norm).item()
 
         learning_rate = learning_rate_schedule(
                 iteration,
@@ -152,8 +152,8 @@ def train(args):
                 "gradient_norm/layers.0.ffn": gradient_norms["layers_first_ffn_norm"],
                 f"gradient_norm/layers.{args.num_layers - 1}.attn": gradient_norms["layers_last_attn_norm"],
                 f"gradient_norm/layers.{args.num_layers - 1}.ffn": gradient_norms["layers_last_ffn_norm"],
-                "activation_norm/layers.0": activation_norms["layers.0"],
-                f"activation_norm/layers.{args.num_layers - 1}": activation_norms[f"layers.{args.num_layers - 1}"],
+                "activation_norm/layers.0": activation_rms["layers.0"],
+                f"activation_norm/layers.{args.num_layers - 1}": activation_rms[f"layers.{args.num_layers - 1}"],
             }, step=iteration)
 
         if iteration % args.eval_intervals == 0:
@@ -179,7 +179,7 @@ def train(args):
                     total_valid_step += valid_batch_size
 
                 mean_valid_loss = total_valid_loss / total_valid_step
-                weight_norm = capture_weight_norm(lm.parameters(), device=device, distributed=True)
+                weight_norm = capture_weight_norm(lm, distributed=True)
                 if rank == 0:
                     run.log({
                         "valid/loss": mean_valid_loss,
@@ -189,7 +189,7 @@ def train(args):
                 lm.train()
 
         if iteration % args.save_intervals == 0:
-            state_dict = {"app": AppState(lm, optimizer)}
+            state_dict = {"app": AppState(lm, optimizer, iteration)}
             dcp.save(state_dict, checkpoint_id=f'checkpoint/{iteration}')
 
         iteration += 1
