@@ -82,6 +82,7 @@ def train(args):
         run = wandb.init(
             entity='zilize',
             project='moellm',
+            name=args.exp_name,
             config=dict(vars(args))
         )
 
@@ -199,6 +200,7 @@ def train(args):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
+    parser.add_argument('--exp_name', type=str, default=os.environ.get('EXP_NAME'))
     parser.add_argument('--train_data', type=str, default='./cache/tinystory/train_encoded.bin')
     parser.add_argument('--valid_data', type=str, default='./cache/tinystory/valid_encoded.bin')
 
