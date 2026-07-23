@@ -3,15 +3,14 @@ import math
 import wandb
 import random
 import argparse
-import functools
 import numpy as np
 
 import torch
 import torch.distributed as dist
-from torch.distributed.fsdp import FullyShardedDataParallel, StateDictType, FullStateDictConfig, \
-    FullOptimStateDictConfig
-from torch.distributed.fsdp import ShardingStrategy, MixedPrecision
-from torch.distributed.fsdp.wrap import size_based_auto_wrap_policy
+import torch.distributed.checkpoint as dcp
+from torch.distributed.fsdp import fully_shard
+from torch.distributed.checkpoint.state_dict import get_state_dict, set_state_dict
+from torch.distributed.checkpoint.stateful import Stateful
 
 from cs336_basics.adamw import AdamW
 from cs336_basics.cross_entropy import cross_entropy
@@ -23,6 +22,38 @@ from utils import capture_weight_norm, capture_gradient_norms, capture_activatio
 
 assert torch.cuda.is_available()
 device = 'cuda'
+
+
+class AppState(Stateful):
+    """This is a useful wrapper for checkpointing the Application State. Since this object is compliant
+    with the Stateful protocol, DCP will automatically call state_dict/load_stat_dict as needed in the
+    dcp.save/load APIs.
+
+    Note: We take advantage of this wrapper to hande calling distributed state dict methods on the model
+    and optimizer.
+    """
+    def __init__(self, model, optimizer, iteration):
+        self.model = model
+        self.optimizer = optimizer
+        self.iteration = iteration
+
+    def state_dict(self):
+        # this line automatically manages FSDP FQN's, as well as sets the default state dict type to FSDP.SHARDED_STATE_DICT
+        model_state_dict, optimizer_state_dict = get_state_dict(self.model, self.optimizer)
+        return {
+            "model": model_state_dict,
+            "optim": optimizer_state_dict,
+            "iter": self.iteration,
+        }
+
+    def load_state_dict(self, state_dict):
+        # sets our state dicts on the model and optimizer, now that we've loaded
+        set_state_dict(
+            self.model,
+            self.optimizer,
+            model_state_dict=state_dict["model"],
+            optim_state_dict=state_dict["optim"]
+        )
 
 
 def set_seed(seed) -> None:
@@ -64,22 +95,14 @@ def train(args):
         args.rope_theta,
         args.context_len,
         args.use_flash_attn
-    )
-    lm = FullyShardedDataParallel(
-        lm,
-        auto_wrap_policy=functools.partial(
-            size_based_auto_wrap_policy,
-            min_num_params=1_000_000
-        ),
-        mixed_precision=MixedPrecision(
-            param_dtype=torch.bfloat16,
-            reduce_dtype=torch.float32,
-            buffer_dtype=torch.bfloat16
-        ),
-        sharding_strategy=ShardingStrategy.FULL_SHARD,
-        device_id=torch.cuda.current_device(),
-        sync_module_states=True,  # important!
-    )
+    ).to(rank)
+
+    # sync the initialized weight among ranks
+    for param in lm.parameters():
+        dist.broadcast(param.data, src=0)
+    for layer in lm.layers:
+        fully_shard(layer)
+    fully_shard(lm)
 
     lm.layers[0].register_forward_hook(capture_activation_norm_hook('layers.0', distributed=True))
     lm.layers[args.num_layers - 1].register_forward_hook(capture_activation_norm_hook(f'layers.{args.num_layers - 1}', distributed=True))
@@ -106,7 +129,7 @@ def train(args):
         loss.backward()
 
         gradient_norms = capture_gradient_norms(lm, args.num_layers, device=device, distributed=True)
-        gradient_global_norm = lm.clip_grad_norm_(max_norm=args.max_l2_norm).item()
+        gradient_global_norm = torch.nn.utils.clip_grad_norm_(lm, max_norm=args.max_l2_norm).item()
 
         learning_rate = learning_rate_schedule(
                 iteration,
@@ -166,20 +189,12 @@ def train(args):
                 lm.train()
 
         if iteration % args.save_intervals == 0:
-            with FullyShardedDataParallel.state_dict_type(
-                    lm,
-                    StateDictType.FULL_STATE_DICT,
-                    FullStateDictConfig(offload_to_cpu=True, rank0_only=True),
-                    FullOptimStateDictConfig(offload_to_cpu=True, rank0_only=True)
-            ):
-                if rank == 0:
-                    save_path = f'checkpoint/{iteration}.pt'
-                    os.makedirs(os.path.dirname(save_path), exist_ok=True)
-                    torch.save({
-                        "model": lm.state_dict(),
-                        "optimizer": FullyShardedDataParallel.optim_state_dict(lm, optimizer)
-                    }, save_path)
+            state_dict = {"app": AppState(lm, optimizer)}
+            dcp.save(state_dict, checkpoint_id=f'checkpoint/{iteration}')
+
         iteration += 1
+
+    dist.destroy_process_group()
 
 
 if __name__ == '__main__':

@@ -166,3 +166,4 @@ data/
 cache/
 checkpoint/
 wandb/
+k8s/

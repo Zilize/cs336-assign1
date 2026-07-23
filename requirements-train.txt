@@ -1,5 +1,6 @@
 # 仅训练所需的运行时依赖（不含 pytest/ruff/ty 等开发工具）
-torch~=2.11.0
+# 注意：torch 不在这里装，改由 Dockerfile 从 PyTorch 官方 cu126 索引单独安装，
+#       否则 PyPI 默认会拉 cu130，跟 535 驱动(CUDA 12.2)不兼容。
 numpy>=2.4
 einops>=0.8
 regex>=2026.3.32

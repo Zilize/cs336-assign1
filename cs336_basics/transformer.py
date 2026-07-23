@@ -1,10 +1,9 @@
 import torch
-from einops import einsum
 
 from cs336_basics.attention import MHA
 from cs336_basics.embedding import Embedding
+from cs336_basics.linear import Linear
 from cs336_basics.rmsnorm import RMSNorm
-from cs336_basics.softmax import softmax
 from cs336_basics.swiglu import SwiGLU
 
 
@@ -53,14 +52,12 @@ class TransformerLM(torch.nn.Module):
             use_flash_attn=use_flash_attn
         ) for _ in range(self.num_layers)])
         self.ln_final = RMSNorm(d_model)
-        self.lm_head = Embedding(self.vocab_size, d_model)
+        self.lm_head = Linear(d_model, self.vocab_size)
 
     def forward(self, in_indices: torch.LongTensor) -> torch.Tensor:
         x = self.token_embeddings(in_indices)
         for layer in self.layers:
             x = layer(x)
         x = self.ln_final(x)
-
-        output = einsum(x, self.lm_head.weight, 'batch_size seq_len d_model, vocab_size d_model -> '
-                                                'batch_size seq_len vocab_size')
+        output = self.lm_head(x)
         return output
