@@ -167,3 +167,4 @@ cache/
 checkpoint/
 wandb/
 k8s/
+analysis/
