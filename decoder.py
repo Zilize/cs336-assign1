@@ -27,10 +27,13 @@ def load_model(args, device: str) -> TransformerLM:
         args.d_model,
         args.num_heads,
         args.d_ff,
-        args.use_rope,
+        not args.remove_rope,
         args.rope_theta,
         args.context_len,
-        args.use_flash_attn
+        args.use_flash_attn,
+        not args.remove_norm,
+        args.post_norm,
+        not args.remove_gate
     )
     lm.load_state_dict(state_dict)
     lm.to(device)
@@ -111,6 +114,10 @@ if __name__ == '__main__':
     parser.add_argument('--num_heads', type=int, default=16)
 
     parser.add_argument('--use_flash_attn', action='store_true')
-    parser.add_argument('--use_rope', action='store_true')
     parser.add_argument('--rope_theta', type=int, default=10000)
+
+    parser.add_argument('--remove_rope', action='store_true')
+    parser.add_argument('--remove_norm', action='store_true')
+    parser.add_argument('--post_norm', action='store_true')
+    parser.add_argument('--remove_gate', action='store_true')
     main(parser.parse_args())

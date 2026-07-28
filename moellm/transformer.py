@@ -4,15 +4,18 @@ from moellm.attention import MHA
 from moellm.embedding import Embedding
 from moellm.linear import Linear
 from moellm.rmsnorm import RMSNorm
+from moellm.silu import SiLU
 from moellm.swiglu import SwiGLU
 
 
 class TransformerBlock(torch.nn.Module):
-    def __init__(self, d_model, num_heads, d_ff, use_rope=True, rope_theta=None, rope_max_seq_len=None, use_flash_attn=False):
+    def __init__(self, d_model, num_heads, d_ff, use_rope=True, rope_theta=None, rope_max_seq_len=None,
+                 use_flash_attn=False, use_norm=True, post_norm=False, use_gate=True):
         super().__init__()
         self.d_model = d_model
         self.num_heads = num_heads
         self.d_ff = d_ff
+        self.post_norm = post_norm
 
         self.attn = MHA(
             self.d_model,
@@ -22,21 +25,26 @@ class TransformerBlock(torch.nn.Module):
             rope_max_seq_len=rope_max_seq_len,
             use_flash_attn=use_flash_attn
         )
-        self.ffn = SwiGLU(self.d_model, self.d_ff)
+        self.ffn = SwiGLU(self.d_model, self.d_ff) if use_gate else SiLU(self.d_model, self.d_ff)
 
-        self.ln1 = RMSNorm(self.d_model)
-        self.ln2 = RMSNorm(self.d_model)
+        self.ln1 = RMSNorm(self.d_model) if use_norm else torch.nn.Identity()
+        self.ln2 = RMSNorm(self.d_model) if use_norm else torch.nn.Identity()
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         token_positions = torch.arange(0, x.shape[-2])
-        x = self.attn(self.ln1(x), token_positions) + x
-        x = self.ffn(self.ln2(x)) + x
+        if self.post_norm:
+            x = self.ln1(self.attn(x, token_positions) + x)
+            x = self.ln2(self.ffn(x) + x)
+        else:
+            x = self.attn(self.ln1(x), token_positions) + x
+            x = self.ffn(self.ln2(x)) + x
         return x
 
 
 class TransformerLM(torch.nn.Module):
     def __init__(self, vocab_size, num_layers, d_model, num_heads, d_ff, use_rope=True,
-                 rope_theta=None, rope_max_seq_len=None, use_flash_attn=False):
+                 rope_theta=None, rope_max_seq_len=None, use_flash_attn=False,
+                 use_norm=True, post_norm=False, use_gate=True):
         super().__init__()
         self.vocab_size = vocab_size
         self.num_layers = num_layers
@@ -49,9 +57,13 @@ class TransformerLM(torch.nn.Module):
             use_rope=use_rope,
             rope_theta=rope_theta,
             rope_max_seq_len=rope_max_seq_len,
-            use_flash_attn=use_flash_attn
+            use_flash_attn=use_flash_attn,
+            use_norm=use_norm,
+            post_norm=post_norm,
+            use_gate=use_gate
         ) for _ in range(self.num_layers)])
-        self.ln_final = RMSNorm(d_model)
+        # post-norm 下每层输出已被归一化，不再需要额外的最终归一化
+        self.ln_final = RMSNorm(d_model) if use_norm and not post_norm else torch.nn.Identity()
         self.lm_head = Linear(d_model, self.vocab_size)
 
     def forward(self, in_indices: torch.LongTensor) -> torch.Tensor:
